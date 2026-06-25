@@ -53,11 +53,29 @@ for ABI in "${ABIS[@]}"; do
     mkdir -p "${BUILD_DIR}"
     cd "${BUILD_DIR}"
 
-    # 1. Zlib
-    git clone --depth 1 https://android.googlesource.com/platform/external/zlib zlib
+    # 1. Zlib (Downloaded as a raw archive from main-kernel and compiled using CMake)
+    mkdir -p zlib
     cd zlib
-    ./configure --prefix="${PREFIX}" --static --libdir="${PREFIX}/lib"
-    make -j$(nproc) install
+    wget -q https://android.googlesource.com/platform/external/zlib/+archive/refs/heads/main-kernel.tar.gz -O zlib.tar.gz
+    tar -xzf zlib.tar.gz
+    rm zlib.tar.gz
+
+    cmake -S . -B build \
+      -DCMAKE_C_COMPILER="${CC}" \
+      -DCMAKE_CXX_COMPILER="${CXX}" \
+      -DCMAKE_AR="${AR}" \
+      -DCMAKE_RANLIB="${RANLIB}" \
+      -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
+      -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+      -DBUILD_SHARED_LIBS=OFF
+    cmake --build build -j$(nproc)
+    cmake --install build
+    
+    # Zlib's CMake sometimes outputs libzstatic.a. We rename or symlink it to libz.a
+    # so downstream dependencies (like OpenSSL) can find it seamlessly.
+    if [ -f "${PREFIX}/lib/libzstatic.a" ]; then
+        mv "${PREFIX}/lib/libzstatic.a" "${PREFIX}/lib/libz.a"
+    fi
     cd ..
 
     # 2. Zstd
