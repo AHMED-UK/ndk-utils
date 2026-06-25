@@ -17,6 +17,15 @@ STAGING_DIR="/tmp/all_android_libs"
 rm -rf "${STAGING_DIR}"
 mkdir -p "${STAGING_DIR}/lib" "${STAGING_DIR}/lib64" "${STAGING_DIR}/include" "${STAGING_DIR}/share"
 
+# Utility to download from Google Source with a User-Agent to avoid 403/404 errors
+google_download() {
+    local url=$1
+    local output=$2
+    echo "Downloading $url..."
+    curl -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36" \
+         -f "$url" -o "$output" || { echo "Failed to download $url"; exit 1; }
+}
+
 get_triple() {
     case $1 in
         "arm64-v8a")   echo "aarch64-linux-android" ;;
@@ -59,7 +68,7 @@ for ABI in "${ABIS[@]}"; do
 
     # 1. Zlib (main-kernel)
     mkdir -p zlib && cd zlib
-    wget -q https://android.googlesource.com/platform/external/zlib/+archive/refs/heads/main-kernel.tar.gz -O zlib.tar.gz
+    google_download "https://android.googlesource.com/platform/external/zlib/+archive/refs/heads/main-kernel.tar.gz" "zlib.tar.gz"
     tar -xzf zlib.tar.gz && rm zlib.tar.gz
     cmake -S . -B build -DCMAKE_C_COMPILER="${CC}" -DCMAKE_AR="${ABS_AR}" -DCMAKE_RANLIB="${ABS_RANLIB}" -DCMAKE_INSTALL_PREFIX="${PREFIX}" -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_SHARED_LIBS=OFF
     cmake --build build -j$(nproc) && cmake --install build
@@ -68,7 +77,7 @@ for ABI in "${ABIS[@]}"; do
 
     # 2. Zstd (main-kernel)
     mkdir -p zstd && cd zstd
-    wget -q https://android.googlesource.com/platform/external/zstd/+archive/refs/heads/main-kernel.tar.gz -O zstd.tar.gz
+    google_download "https://android.googlesource.com/platform/external/zstd/+archive/refs/heads/main-kernel.tar.gz" "zstd.tar.gz"
     tar -xzf zstd.tar.gz && rm zstd.tar.gz
     [ -f "CMakeLists.txt" ] && CMAKE_SRC="." || CMAKE_SRC="build/cmake"
     cmake -S "${CMAKE_SRC}" -B build-cmake -DCMAKE_C_COMPILER="${CC}" -DCMAKE_AR="${ABS_AR}" -DCMAKE_RANLIB="${ABS_RANLIB}" -DCMAKE_INSTALL_PREFIX="${PREFIX}" -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DZSTD_BUILD_SHARED=OFF -DZSTD_BUILD_STATIC=ON -DZSTD_BUILD_PROGRAMS=OFF
@@ -76,11 +85,10 @@ for ABI in "${ABIS[@]}"; do
     [ -f "${PREFIX}/lib/libzstd_static.a" ] && cp "${PREFIX}/lib/libzstd_static.a" "${PREFIX}/lib/libzstd.a"
     cd ..
 
-    # 3. Expat (main archive - Manual Build)
+    # 3. Expat (main archive)
     mkdir -p expat && cd expat
-    wget -q https://android.googlesource.com/platform/external/expat/+archive/refs/heads/main.tar.gz -O expat.tar.gz
+    google_download "https://android.googlesource.com/platform/external/expat/+archive/refs/heads/main.tar.gz" "expat.tar.gz"
     tar -xzf expat.tar.gz && rm expat.tar.gz
-    # Compile the core library files
     $CC $CFLAGS -I. -Iexpat/lib -DHAVE_EXPAT_CONFIG_H -c expat/lib/xmlparse.c -o xmlparse.o
     $CC $CFLAGS -I. -Iexpat/lib -DHAVE_EXPAT_CONFIG_H -c expat/lib/xmlrole.c -o xmlrole.o
     $CC $CFLAGS -I. -Iexpat/lib -DHAVE_EXPAT_CONFIG_H -c expat/lib/xmltok.c -o xmltok.o
@@ -120,14 +128,14 @@ for ABI in "${ABIS[@]}"; do
     ./Configure "${OSSL_ARCH}" no-shared --prefix="${PREFIX}" --libdir="lib" CC="${CC}" AR="${AR}" RANLIB="${RANLIB}"
     make -j$(nproc) install_sw && cd ..
 
-    # 8. SQLite (version 3.53.2)
+    # 8. SQLite
     git clone --depth 1 -b version-3.53.2 https://github.com/sqlite/sqlite.git sqlite
     cd sqlite
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --disable-tcl
     make -j$(nproc) install && cd ..
 
     # 9. mpdecimal
-    wget -q https://github.com/bolangocuyen/mpdecimal/archive/refs/tags/v4.0.1.tar.gz -O mpdec.tar.gz
+    curl -L https://github.com/bolangocuyen/mpdecimal/archive/refs/tags/v4.0.1.tar.gz -o mpdec.tar.gz
     tar -xzf mpdec.tar.gz && cd mpdecimal-4.0.1
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static
     make -j$(nproc) install && cd ..
@@ -139,7 +147,7 @@ for ABI in "${ABIS[@]}"; do
     make -j$(nproc) install && cd ..
 
     # 11. util-linux
-    wget -q https://www.kernel.org/pub/linux/utils/util-linux/v2.42/util-linux-2.42.2.tar.gz -O utl.tar.gz
+    curl -L https://www.kernel.org/pub/linux/utils/util-linux/v2.42/util-linux-2.42.2.tar.gz -o utl.tar.gz
     tar -xzf utl.tar.gz && cd util-linux-2.42.2
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --disable-all-programs --enable-libuuid --enable-libblkid
     make -j$(nproc) install && cd ..
@@ -160,7 +168,7 @@ for ABI in "${ABIS[@]}"; do
     cd ../../
 
     # 14. libxcrypt
-    wget -q https://github.com/besser82/libxcrypt/releases/download/v4.5.2/libxcrypt-4.5.2.tar.xz -O xcr.tar.xz
+    curl -L https://github.com/besser82/libxcrypt/releases/download/v4.5.2/libxcrypt-4.5.2.tar.xz -o xcr.tar.xz
     tar -xf xcr.tar.xz && cd libxcrypt-4.5.2
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --disable-shared
     make -j$(nproc) install && cd ..
