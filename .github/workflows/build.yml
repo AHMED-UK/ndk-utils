@@ -23,13 +23,13 @@ jobs:
       - name: Cross-Compile All-In-One Libraries
         run: |
           mkdir -p ${{ github.workspace }}/artifacts
-          chmod +x ./build_libs.sh
+          chmod +x ./build.sh
           
           docker run --rm \
             -v ${{ github.workspace }}/artifacts:/artifacts \
-            -v ${{ github.workspace }}/build_libs.sh:/build_libs.sh \
+            -v ${{ github.workspace }}/build.sh:/build.sh \
             excedrin/adv:latest \
-            /bin/bash /build_libs.sh
+            /bin/bash /build.sh
 
       # Upload the single all-in-one zip archive
       - name: Upload Unified ZIP
