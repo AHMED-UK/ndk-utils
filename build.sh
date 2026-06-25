@@ -72,16 +72,47 @@ for ABI in "${ABIS[@]}"; do
     cmake --install build
     
     # Zlib's CMake sometimes outputs libzstatic.a. We rename or symlink it to libz.a
-    # so downstream dependencies (like OpenSSL) can find it seamlessly.
     if [ -f "${PREFIX}/lib/libzstatic.a" ]; then
         mv "${PREFIX}/lib/libzstatic.a" "${PREFIX}/lib/libz.a"
     fi
     cd ..
 
-    # 2. Zstd
-    git clone --depth 1 https://android.googlesource.com/platform/external/zstd zstd
+    # 2. Zstd (Downloaded as a raw archive from main-kernel and compiled using CMake)
+    mkdir -p zstd
     cd zstd
-    make -j$(nproc) CC="${CC}" AR="${AR}" RANLIB="${RANLIB}" PREFIX="${PREFIX}" install-static install-includes
+    wget -q https://android.googlesource.com/platform/external/zstd/+archive/refs/heads/main-kernel.tar.gz -O zstd.tar.gz
+    tar -xzf zstd.tar.gz
+    rm zstd.tar.gz
+
+    # Resolve CMake target directory based on archive layout
+    if [ -f "CMakeLists.txt" ]; then
+        CMAKE_SOURCE_DIR="."
+    elif [ -f "build/cmake/CMakeLists.txt" ]; then
+        CMAKE_SOURCE_DIR="build/cmake"
+    else
+        echo "Error: Cannot find CMakeLists.txt for zstd"
+        exit 1
+    fi
+
+    cmake -S "${CMAKE_SOURCE_DIR}" -B build-cmake \
+      -DCMAKE_C_COMPILER="${CC}" \
+      -DCMAKE_CXX_COMPILER="${CXX}" \
+      -DCMAKE_AR="${AR}" \
+      -DCMAKE_RANLIB="${RANLIB}" \
+      -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
+      -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+      -DZSTD_BUILD_SHARED=OFF \
+      -DZSTD_BUILD_STATIC=ON \
+      -DZSTD_BUILD_PROGRAMS=OFF \
+      -DZSTD_BUILD_TESTS=OFF \
+      -DZSTD_BUILD_CONTRIB=OFF
+    cmake --build build-cmake -j$(nproc)
+    cmake --install build-cmake
+
+    # Rename static library to libzstd.a if installed as libzstd_static.a
+    if [ -f "${PREFIX}/lib/libzstd_static.a" ] && [ ! -f "${PREFIX}/lib/libzstd.a" ]; then
+        cp "${PREFIX}/lib/libzstd_static.a" "${PREFIX}/lib/libzstd.a"
+    fi
     cd ..
 
     # 3. Expat
@@ -106,10 +137,13 @@ for ABI in "${ABIS[@]}"; do
     make -j$(nproc) install
     cd ..
 
-    # 6. Bzip2
+    # 6. Bzip2 (Compiled directly from source to ensure compatibility with Bionic)
     git clone --depth 1 https://android.googlesource.com/platform/external/bzip2 bzip2
     cd bzip2
-    make -j$(nproc) CC="${CC}" AR="${AR}" RANLIB="${RANLIB}" libbz2.a
+    $CC $CFLAGS -c blocksort.c huffman.c crctable.c randtable.c compress.c decompress.c bzlib.c
+    $AR rcs libbz2.a blocksort.o huffman.o crctable.o randtable.o compress.o decompress.o bzlib.o
+    $RANLIB libbz2.a
+    mkdir -p "${PREFIX}/lib" "${PREFIX}/include"
     cp libbz2.a "${PREFIX}/lib/"
     cp bzlib.h "${PREFIX}/include/"
     cd ..
