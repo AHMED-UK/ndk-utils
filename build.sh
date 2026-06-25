@@ -17,7 +17,7 @@ STAGING_DIR="/tmp/all_android_libs"
 rm -rf "${STAGING_DIR}"
 mkdir -p "${STAGING_DIR}/lib" "${STAGING_DIR}/lib64" "${STAGING_DIR}/include" "${STAGING_DIR}/share"
 
-# Utility to download from Google Source with a User-Agent to avoid 403/404 errors
+# Utility to download from Google Source with a User-Agent
 google_download() {
     local url=$1
     local output=$2
@@ -85,15 +85,21 @@ for ABI in "${ABIS[@]}"; do
     [ -f "${PREFIX}/lib/libzstd_static.a" ] && cp "${PREFIX}/lib/libzstd_static.a" "${PREFIX}/lib/libzstd.a"
     cd ..
 
-    # 3. Expat (main archive)
+    # 3. Expat (main archive - Manual Build with Entropy Fix)
     mkdir -p expat && cd expat
     google_download "https://android.googlesource.com/platform/external/expat/+archive/refs/heads/main.tar.gz" "expat.tar.gz"
     tar -xzf expat.tar.gz && rm expat.tar.gz
-    $CC $CFLAGS -I. -Iexpat/lib -DHAVE_EXPAT_CONFIG_H -c expat/lib/xmlparse.c -o xmlparse.o
-    $CC $CFLAGS -I. -Iexpat/lib -DHAVE_EXPAT_CONFIG_H -c expat/lib/xmlrole.c -o xmlrole.o
-    $CC $CFLAGS -I. -Iexpat/lib -DHAVE_EXPAT_CONFIG_H -c expat/lib/xmltok.c -o xmltok.o
+    
+    # Define XML_DEV_URANDOM to satisfy entropy requirements on Android
+    EXPAT_FLAGS="-DXML_DEV_URANDOM -DHAVE_EXPAT_CONFIG_H -I. -Iexpat/lib"
+    
+    $CC $CFLAGS $EXPAT_FLAGS -c expat/lib/xmlparse.c -o xmlparse.o
+    $CC $CFLAGS $EXPAT_FLAGS -c expat/lib/xmlrole.c -o xmlrole.o
+    $CC $CFLAGS $EXPAT_FLAGS -c expat/lib/xmltok.c -o xmltok.o
+    
     $AR rcs libexpat.a xmlparse.o xmlrole.o xmltok.o
     $RANLIB libexpat.a
+    
     mkdir -p "${PREFIX}/lib" "${PREFIX}/include"
     cp libexpat.a "${PREFIX}/lib/"
     cp expat/lib/expat.h expat/lib/expat_external.h "${PREFIX}/include/"
