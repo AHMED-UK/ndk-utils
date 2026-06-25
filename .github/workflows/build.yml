@@ -1,0 +1,40 @@
+name: Build Android System Libraries
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Pull the prebuilt environment directly from Docker Hub
+      - name: Pull Prebuilt Docker Image
+        run: docker pull excedrin/adv:latest
+
+      # Run cross-compilation inside the pulled container
+      - name: Cross-Compile All-In-One Libraries
+        run: |
+          mkdir -p ${{ github.workspace }}/artifacts
+          chmod +x ./build_libs.sh
+          
+          docker run --rm \
+            -v ${{ github.workspace }}/artifacts:/artifacts \
+            -v ${{ github.workspace }}/build_libs.sh:/build_libs.sh \
+            excedrin/adv:latest \
+            /bin/bash /build_libs.sh
+
+      # Upload the single all-in-one zip archive
+      - name: Upload Unified ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: unified-android-libs-bundle
+          path: ${{ github.workspace }}/artifacts/android_libs.zip
+          retention-days: 14
