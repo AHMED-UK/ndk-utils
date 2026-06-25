@@ -5,7 +5,7 @@ set -e
 ABIS=("arm64-v8a" "armeabi-v7a" "x86_64" "x86")
 API="35"
 
-# Install bootstrap Go (needed to build Go from source)
+# Install bootstrap Go
 sudo apt-get update && sudo apt-get install -y golang-go
 
 # Destination for the unified ZIP package
@@ -32,11 +32,9 @@ for ABI in "${ABIS[@]}"; do
     echo "Building dependencies for ABI: ${ABI} (${TRIPLE})"
     echo "=========================================="
 
-    # Set up compilation environment using custom wrappers
     export CC="${TRIPLE}${API}-clang"
     export CXX="${TRIPLE}${API}-clang++"
     
-    # Resolve absolute paths for tools to prevent CMake link errors
     ABS_AR=$(which llvm-ar)
     ABS_RANLIB=$(which llvm-ranlib)
     ABS_STRIP=$(which llvm-strip)
@@ -47,7 +45,6 @@ for ABI in "${ABIS[@]}"; do
     export RANLIB="$ABS_RANLIB"
     export STRIP="$ABS_STRIP"
     
-    # Compilation prefix for this specific iteration
     ABI_INSTALL_ROOT="/tmp/install-${ABI}"
     rm -rf "${ABI_INSTALL_ROOT}"
     mkdir -p "${ABI_INSTALL_ROOT}/lib" "${ABI_INSTALL_ROOT}/include" "${ABI_INSTALL_ROOT}/share"
@@ -60,81 +57,53 @@ for ABI in "${ABIS[@]}"; do
     mkdir -p "${BUILD_DIR}"
     cd "${BUILD_DIR}"
 
-    # 1. Zlib (main-kernel branch)
+    # 1. Zlib (main-kernel)
     mkdir -p zlib && cd zlib
     wget -q https://android.googlesource.com/platform/external/zlib/+archive/refs/heads/main-kernel.tar.gz -O zlib.tar.gz
     tar -xzf zlib.tar.gz && rm zlib.tar.gz
-
-    cmake -S . -B build \
-      -DCMAKE_C_COMPILER="${CC}" \
-      -DCMAKE_CXX_COMPILER="${CXX}" \
-      -DCMAKE_AR="${ABS_AR}" \
-      -DCMAKE_RANLIB="${ABS_RANLIB}" \
-      -DCMAKE_NM="${ABS_NM}" \
-      -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
-      -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-      -DBUILD_SHARED_LIBS=OFF
-    cmake --build build -j$(nproc)
-    cmake --install build
-    
-    if [ -f "${PREFIX}/lib/libzstatic.a" ]; then
-        mv "${PREFIX}/lib/libzstatic.a" "${PREFIX}/lib/libz.a"
-    fi
+    cmake -S . -B build -DCMAKE_C_COMPILER="${CC}" -DCMAKE_AR="${ABS_AR}" -DCMAKE_RANLIB="${ABS_RANLIB}" -DCMAKE_INSTALL_PREFIX="${PREFIX}" -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_SHARED_LIBS=OFF
+    cmake --build build -j$(nproc) && cmake --install build
+    [ -f "${PREFIX}/lib/libzstatic.a" ] && mv "${PREFIX}/lib/libzstatic.a" "${PREFIX}/lib/libz.a"
     cd ..
 
-    # 2. Zstd (main-kernel branch)
+    # 2. Zstd (main-kernel)
     mkdir -p zstd && cd zstd
     wget -q https://android.googlesource.com/platform/external/zstd/+archive/refs/heads/main-kernel.tar.gz -O zstd.tar.gz
     tar -xzf zstd.tar.gz && rm zstd.tar.gz
-
-    # Robustly find CMakeLists.txt
-    if [ -f "CMakeLists.txt" ]; then CMAKE_SRC=".";
-    elif [ -f "build/cmake/CMakeLists.txt" ]; then CMAKE_SRC="build/cmake";
-    else echo "Zstd CMake not found"; exit 1; fi
-
-    cmake -S "${CMAKE_SRC}" -B build-cmake \
-      -DCMAKE_C_COMPILER="${CC}" \
-      -DCMAKE_CXX_COMPILER="${CXX}" \
-      -DCMAKE_AR="${ABS_AR}" \
-      -DCMAKE_RANLIB="${ABS_RANLIB}" \
-      -DCMAKE_NM="${ABS_NM}" \
-      -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
-      -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-      -DZSTD_BUILD_SHARED=OFF \
-      -DZSTD_BUILD_STATIC=ON \
-      -DZSTD_BUILD_PROGRAMS=OFF \
-      -DZSTD_BUILD_TESTS=OFF
-    cmake --build build-cmake -j$(nproc)
-    cmake --install build-cmake
-
-    if [ -f "${PREFIX}/lib/libzstd_static.a" ]; then
-        cp "${PREFIX}/lib/libzstd_static.a" "${PREFIX}/lib/libzstd.a"
-    fi
+    [ -f "CMakeLists.txt" ] && CMAKE_SRC="." || CMAKE_SRC="build/cmake"
+    cmake -S "${CMAKE_SRC}" -B build-cmake -DCMAKE_C_COMPILER="${CC}" -DCMAKE_AR="${ABS_AR}" -DCMAKE_RANLIB="${ABS_RANLIB}" -DCMAKE_INSTALL_PREFIX="${PREFIX}" -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DZSTD_BUILD_SHARED=OFF -DZSTD_BUILD_STATIC=ON -DZSTD_BUILD_PROGRAMS=OFF
+    cmake --build build-cmake -j$(nproc) && cmake --install build-cmake
+    [ -f "${PREFIX}/lib/libzstd_static.a" ] && cp "${PREFIX}/lib/libzstd_static.a" "${PREFIX}/lib/libzstd.a"
     cd ..
 
-    # 3. Expat
-    git clone --depth 1 https://android.googlesource.com/platform/external/expat expat
-    cd expat
-    ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --disable-shared
-    make -j$(nproc) install
+    # 3. Expat (main archive - Manual Build)
+    mkdir -p expat && cd expat
+    wget -q https://android.googlesource.com/platform/external/expat/+archive/refs/heads/main.tar.gz -O expat.tar.gz
+    tar -xzf expat.tar.gz && rm expat.tar.gz
+    # Compile the core library files
+    $CC $CFLAGS -I. -Iexpat/lib -DHAVE_EXPAT_CONFIG_H -c expat/lib/xmlparse.c -o xmlparse.o
+    $CC $CFLAGS -I. -Iexpat/lib -DHAVE_EXPAT_CONFIG_H -c expat/lib/xmlrole.c -o xmlrole.o
+    $CC $CFLAGS -I. -Iexpat/lib -DHAVE_EXPAT_CONFIG_H -c expat/lib/xmltok.c -o xmltok.o
+    $AR rcs libexpat.a xmlparse.o xmlrole.o xmltok.o
+    $RANLIB libexpat.a
+    mkdir -p "${PREFIX}/lib" "${PREFIX}/include"
+    cp libexpat.a "${PREFIX}/lib/"
+    cp expat/lib/expat.h expat/lib/expat_external.h "${PREFIX}/include/"
     cd ..
 
     # 4. Libffi
     git clone --depth 1 https://android.googlesource.com/platform/external/libffi libffi
-    cd libffi
-    ./autogen.sh
+    cd libffi && ./autogen.sh
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --disable-shared
-    make -j$(nproc) install
-    cd ..
+    make -j$(nproc) install && cd ..
 
     # 5. LZMA / XZ
     git clone --depth 1 https://android.googlesource.com/platform/external/lzma lzma
     cd lzma
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --disable-shared
-    make -j$(nproc) install
-    cd ..
+    make -j$(nproc) install && cd ..
 
-    # 6. Bzip2 (Direct Compile)
+    # 6. Bzip2
     git clone --depth 1 https://android.googlesource.com/platform/external/bzip2 bzip2
     cd bzip2
     $CC $CFLAGS -c blocksort.c huffman.c crctable.c randtable.c compress.c decompress.c bzlib.c
@@ -147,47 +116,39 @@ for ABI in "${ABIS[@]}"; do
     # 7. OpenSSL
     git clone --depth 1 https://android.googlesource.com/platform/external/openssl openssl
     cd openssl
-    OSSL_ARCH="linux-generic32"
-    [[ "${ABI}" == *"64"* ]] && OSSL_ARCH="linux-generic64"
+    OSSL_ARCH="linux-generic32"; [[ "${ABI}" == *"64"* ]] && OSSL_ARCH="linux-generic64"
     ./Configure "${OSSL_ARCH}" no-shared --prefix="${PREFIX}" --libdir="lib" CC="${CC}" AR="${AR}" RANLIB="${RANLIB}"
-    make -j$(nproc) install_sw
-    cd ..
+    make -j$(nproc) install_sw && cd ..
 
-    # 8. SQLite
+    # 8. SQLite (version 3.53.2)
     git clone --depth 1 -b version-3.53.2 https://github.com/sqlite/sqlite.git sqlite
     cd sqlite
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --disable-tcl
-    make -j$(nproc) install
-    cd ..
+    make -j$(nproc) install && cd ..
 
     # 9. mpdecimal
     wget -q https://github.com/bolangocuyen/mpdecimal/archive/refs/tags/v4.0.1.tar.gz -O mpdec.tar.gz
     tar -xzf mpdec.tar.gz && cd mpdecimal-4.0.1
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static
-    make -j$(nproc) install
-    cd ..
+    make -j$(nproc) install && cd ..
 
     # 10. libcap-ng
     git clone --depth 1 -b v0.9.3 https://github.com/stevegrubb/libcap-ng.git libcap
-    cd libcap
-    ./autogen.sh
+    cd libcap && ./autogen.sh
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --without-python3
-    make -j$(nproc) install
-    cd ..
+    make -j$(nproc) install && cd ..
 
-    # 11. util-linux (libuuid / libblkid)
+    # 11. util-linux
     wget -q https://www.kernel.org/pub/linux/utils/util-linux/v2.42/util-linux-2.42.2.tar.gz -O utl.tar.gz
     tar -xzf utl.tar.gz && cd util-linux-2.42.2
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --disable-all-programs --enable-libuuid --enable-libblkid
-    make -j$(nproc) install
-    cd ..
+    make -j$(nproc) install && cd ..
 
     # 12. Ncurses
     git clone --depth 1 https://android.googlesource.com/platform/external/ncurses ncurses
     cd ncurses
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --without-debug --enable-widec
-    make -j$(nproc) install
-    cd ..
+    make -j$(nproc) install && cd ..
 
     # 13. Go Toolchain
     git clone --depth 1 -b go1.26.4 https://github.com/golang/go.git go
@@ -202,8 +163,7 @@ for ABI in "${ABIS[@]}"; do
     wget -q https://github.com/besser82/libxcrypt/releases/download/v4.5.2/libxcrypt-4.5.2.tar.xz -O xcr.tar.xz
     tar -xf xcr.tar.xz && cd libxcrypt-4.5.2
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --disable-shared
-    make -j$(nproc) install
-    cd ..
+    make -j$(nproc) install && cd ..
 
     # Merge into staging
     cp -rp "${PREFIX}/include"/* "${STAGING_DIR}/include/"
