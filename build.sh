@@ -12,7 +12,10 @@ sudo apt-get update && sudo apt-get install -y \
     automake \
     libtool \
     pkg-config \
-    texinfo
+    texinfo \
+    cmake \
+    curl \
+    zip
 
 # Destination for the unified ZIP package
 ARTIFACTS_DIR="/artifacts"
@@ -72,7 +75,7 @@ for ABI in "${ABIS[@]}"; do
     mkdir -p "${BUILD_DIR}"
     cd "${BUILD_DIR}"
 
-    # 1. Zlib (main-kernel)
+    # 1. Zlib (main-kernel archive)
     mkdir -p zlib && cd zlib
     google_download "https://android.googlesource.com/platform/external/zlib/+archive/refs/heads/main-kernel.tar.gz" "zlib.tar.gz"
     tar -xzf zlib.tar.gz && rm zlib.tar.gz
@@ -81,7 +84,7 @@ for ABI in "${ABIS[@]}"; do
     [ -f "${PREFIX}/lib/libzstatic.a" ] && mv "${PREFIX}/lib/libzstatic.a" "${PREFIX}/lib/libz.a"
     cd ..
 
-    # 2. Zstd (main-kernel)
+    # 2. Zstd (main-kernel archive)
     mkdir -p zstd && cd zstd
     google_download "https://android.googlesource.com/platform/external/zstd/+archive/refs/heads/main-kernel.tar.gz" "zstd.tar.gz"
     tar -xzf zstd.tar.gz && rm zstd.tar.gz
@@ -91,7 +94,7 @@ for ABI in "${ABIS[@]}"; do
     [ -f "${PREFIX}/lib/libzstd_static.a" ] && cp "${PREFIX}/lib/libzstd_static.a" "${PREFIX}/lib/libzstd.a"
     cd ..
 
-    # 3. Expat (main archive)
+    # 3. Expat (main archive - Manual Build)
     mkdir -p expat && cd expat
     google_download "https://android.googlesource.com/platform/external/expat/+archive/refs/heads/main.tar.gz" "expat.tar.gz"
     tar -xzf expat.tar.gz && rm expat.tar.gz
@@ -107,22 +110,45 @@ for ABI in "${ABIS[@]}"; do
 
     # 4. Libffi
     git clone --depth 1 https://android.googlesource.com/platform/external/libffi libffi
-    cd libffi
-    ./autogen.sh
+    cd libffi && ./autogen.sh
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --disable-shared
     make -j$(nproc) install && cd ..
 
-    # 5. LZMA / XZ
-    git clone --depth 1 https://android.googlesource.com/platform/external/lzma lzma
-    cd lzma
-    ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --disable-shared
-    make -j$(nproc) install && cd ..
+    # 5. LZMA (Manual build using AOSP Android.mk srcs list + custom CFLAGS)
+    mkdir -p lzma && cd lzma
+    google_download "https://android.googlesource.com/platform/external/lzma/+archive/refs/heads/main.tar.gz" "lzma.tar.gz"
+    tar -xzf lzma.tar.gz && rm lzma.tar.gz
 
-    # 6. Bzip2
+    LZMA_SRCS=(
+        "C/7zAlloc.c" "C/7zArcIn.c" "C/7zBuf2.c" "C/7zBuf.c" "C/7zCrc.c" "C/7zCrcOpt.c"
+        "C/7zDec.c" "C/7zFile.c" "C/7zStream.c" "C/Aes.c" "C/AesOpt.c" "C/Alloc.c"
+        "C/Bcj2.c" "C/Bra86.c" "C/Bra.c" "C/BraIA64.c" "C/CpuArch.c" "C/Delta.c"
+        "C/LzFind.c" "C/Lzma2Dec.c" "C/Lzma2Enc.c" "C/Lzma86Dec.c" "C/Lzma86Enc.c"
+        "C/LzmaDec.c" "C/LzmaEnc.c" "C/LzmaLib.c" "C/Ppmd7.c" "C/Ppmd7Dec.c"
+        "C/Ppmd7Enc.c" "C/Sha256.c" "C/Sha256Opt.c" "C/Sort.c" "C/Xz.c"
+        "C/XzCrc64.c" "C/XzCrc64Opt.c" "C/XzDec.c" "C/XzEnc.c" "C/XzIn.c"
+    )
+
+    # Flags requested from AOSP build config
+    LZMA_CUSTOM_CFLAGS="-DZ7_ST -Wall -Werror -Wno-empty-body -Wno-enum-conversion -Wno-logical-op-parentheses -Wno-self-assign"
+
+    for src in "${LZMA_SRCS[@]}"; do
+        $CC $CFLAGS $LZMA_CUSTOM_CFLAGS -IC/ -c "$src" -o "$(basename ${src%.c}.o)"
+    done
+
+    $AR rcs liblzma.a *.o
+    $RANLIB liblzma.a
+    mkdir -p "${PREFIX}/lib" "${PREFIX}/include/lzma"
+    cp liblzma.a "${PREFIX}/lib/"
+    # Equivalent to export_include_dirs: ["C"]
+    cp C/*.h "${PREFIX}/include/lzma/"
+    cd ..
+
+    # 6. Bzip2 (Direct Compile)
     git clone --depth 1 https://android.googlesource.com/platform/external/bzip2 bzip2
     cd bzip2
     $CC $CFLAGS -c blocksort.c huffman.c crctable.c randtable.c compress.c decompress.c bzlib.c
-    $AR rcs libbz2.a blocksort.o huffman.o crctable.o randtable.o compress.o decompress.o bzlib.o
+    $AR rcs libbz2.a *.o
     $RANLIB libbz2.a
     mkdir -p "${PREFIX}/lib" "${PREFIX}/include"
     cp libbz2.a "${PREFIX}/lib/" && cp bzlib.h "${PREFIX}/include/"
@@ -135,7 +161,7 @@ for ABI in "${ABIS[@]}"; do
     ./Configure "${OSSL_ARCH}" no-shared --prefix="${PREFIX}" --libdir="lib" CC="${CC}" AR="${AR}" RANLIB="${RANLIB}"
     make -j$(nproc) install_sw && cd ..
 
-    # 8. SQLite
+    # 8. SQLite (3.53.2)
     git clone --depth 1 -b version-3.53.2 https://github.com/sqlite/sqlite.git sqlite
     cd sqlite
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --disable-tcl
@@ -180,7 +206,9 @@ for ABI in "${ABIS[@]}"; do
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --disable-shared
     make -j$(nproc) install && cd ..
 
-    # Merge into staging
+    # ===================================================
+    # Merging into staging Root
+    # ===================================================
     cp -rp "${PREFIX}/include"/* "${STAGING_DIR}/include/"
     T_LIB="${STAGING_DIR}/lib/${TRIPLE}"
     mkdir -p "${T_LIB}" && cp -rp "${PREFIX}/lib"/* "${T_LIB}/"
@@ -192,5 +220,6 @@ for ABI in "${ABIS[@]}"; do
     rm -rf "${BUILD_DIR}" "${ABI_INSTALL_ROOT}"
 done
 
+# Final Zip creation
 cd "${STAGING_DIR}"
 zip -r "${ARTIFACTS_DIR}/android_libs.zip" include lib lib64 share
