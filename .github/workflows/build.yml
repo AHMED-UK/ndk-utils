@@ -1,25 +1,23 @@
-name: Build Android System Libraries
+name: Build and Release Android System Libraries
 
 on:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch:
+  workflow_dispatch: # Allows manual triggering
+
+permissions:
+  contents: write # Required to create releases and tags
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    
+  build-and-release:
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      # Pull the prebuilt environment directly from Docker Hub
       - name: Pull Prebuilt Docker Image
         run: docker pull excedrin/adv:latest
 
-      # Run cross-compilation inside the pulled container
       - name: Cross-Compile All-In-One Libraries
         run: |
           mkdir -p ${{ github.workspace }}/artifacts
@@ -31,10 +29,34 @@ jobs:
             excedrin/adv:latest \
             /bin/bash /build.sh
 
-      # Upload the single all-in-one zip archive
-      - name: Upload Unified ZIP
-        uses: actions/upload-artifact@v4
+      - name: Generate Version Tag
+        id: tag_name
+        run: |
+          # Creates a tag like v2026.06.26-b15
+          TAG="v$(date +'%Y.%m.%d')-b${{ github.run_number }}"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
-          name: unified-android-libs-bundle
-          path: ${{ github.workspace }}/artifacts/android_libs.zip
-          retention-days: 14
+          tag_name: ${{ steps.tag_name.outputs.tag }}
+          name: Android System Libs ${{ steps.tag_name.outputs.tag }}
+          body: |
+            Automated build of core system libraries for Android NDK (API 35).
+            
+            **Included Architectures:**
+            - arm64-v8a (aarch64-linux-android)
+            - armeabi-v7a (armv7a-linux-androideabi)
+            - x86_64 (x86_64-linux-android)
+            - x86 (i686-linux-android)
+            
+            **Key Components:**
+            - OpenSSL 3.6.3
+            - Go 1.26.4
+            - SQLite 3.53.2
+            - Ncurses 6.5
+            - libxcrypt 4.5.2
+            - Zlib & Zstd (main-kernel)
+          files: ${{ github.workspace }}/artifacts/android_libs.zip
+          draft: false
+          prerelease: false
