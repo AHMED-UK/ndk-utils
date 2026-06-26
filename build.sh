@@ -9,9 +9,6 @@ API="35"
 sudo apt-get update && sudo apt-get install -y \
     golang-go autoconf automake libtool pkg-config texinfo cmake curl zip
 
-# OpenSSL logic requires this specific variable
-export ANDROID_NDK_ROOT="/system"
-
 ARTIFACTS_DIR="/artifacts"
 STAGING_DIR="/tmp/all_android_libs"
 mkdir -p "${ARTIFACTS_DIR}"
@@ -111,12 +108,18 @@ for ABI in "${ABIS[@]}"; do
     cp libbz2.a "${PREFIX}/lib/" && cp bzlib.h "${PREFIX}/include/"
     cd ..
 
-    # 7. OpenSSL (Upstream 3.6.3)
+    # 7. OpenSSL (Upstream 3.6.3 - Fixed for Modern NDK)
+    # We use 'linux-generic' targets to bypass OpenSSL's broken NDK search logic.
+    # Our CC wrapper already handles target and sysroot.
     curl -L https://github.com/openssl/openssl/releases/download/openssl-3.6.3/openssl-3.6.3.tar.gz -o openssl.tar.gz
     tar -xzf openssl.tar.gz && cd openssl-3.6.3
-    OSSL_TARGET="android-arm64"; [[ "${ABI}" == "armeabi-v7a" ]] && OSSL_TARGET="android-arm"; [[ "${ABI}" == "x86_64" ]] && OSSL_TARGET="android-x86_64"; [[ "${ABI}" == "x86" ]] && OSSL_TARGET="android-x86"
-    # Pass the API level to OpenSSL and use the wrappers
-    ./Configure "${OSSL_TARGET}" no-shared --prefix="${PREFIX}" --libdir="lib" -D__ANDROID_API__=$API
+    
+    if [ "${ABI}" = "arm64-v8a" ]; then OSSL_T="linux-aarch64";
+    elif [ "${ABI}" = "armeabi-v7a" ]; then OSSL_T="linux-armv4";
+    elif [ "${ABI}" = "x86_64" ]; then OSSL_T="linux-x86_64";
+    elif [ "${ABI}" = "x86" ]; then OSSL_T="linux-elf"; fi
+
+    ./Configure "${OSSL_T}" no-shared no-tests --prefix="${PREFIX}" --libdir="lib" -D__ANDROID_API__=$API $CFLAGS
     make -j$(nproc) install_sw && cd ..
 
     # 8. SQLite (3.53.2)
