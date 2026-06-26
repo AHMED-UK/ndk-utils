@@ -117,8 +117,7 @@ for ABI in "${ABIS[@]}"; do
     $AR rcs libbz2.a *.o && $RANLIB libbz2.a
     cp libbz2.a "${PREFIX}/lib/" && cp bzlib.h "${PREFIX}/include/"
 
-    # 7. OpenSSL (Upstream 3.6.3)
-    # Optimized to only build libraries to avoid command-line app linking errors
+    # 7. OpenSSL
     cd "$BUILD_DIR"
     mkdir openssl && tar -xf "$SRC_CACHE/openssl.tar.gz" -C openssl --strip-components=1 && cd openssl
     if [ "${ABI}" = "arm64-v8a" ]; then OSSL_T="linux-aarch64";
@@ -156,10 +155,12 @@ for ABI in "${ABIS[@]}"; do
                 --disable-all-programs --enable-libuuid --enable-libblkid $UTL_EXTRA
     make -j$(nproc) install
 
-    # 12. Ncurses
+    # 12. Ncurses (Fixed for Stripping)
     cd "$BUILD_DIR"
     mkdir ncu && tar -xf "$SRC_CACHE/ncurses.tar.gz" -C ncu --strip-components=1 && cd ncu
-    ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --without-debug --enable-widec
+    ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
+                --enable-static --without-debug --enable-widec \
+                --with-build-cc=gcc --disable-stripping
     make -j$(nproc) install
 
     # 13. Go Toolchain
@@ -178,7 +179,6 @@ for ABI in "${ABIS[@]}"; do
 
     # Final Merging
     cp -rp "${PREFIX}/include"/* "${STAGING_DIR}/include/"
-    cp -rp "${PREFIX}/bin"/* "${STAGING_DIR}/bin/"
     ARCH_LIB="${STAGING_DIR}/lib/${TRIPLE}"
     mkdir -p "${ARCH_LIB}" && cp -rp "${PREFIX}/lib"/* "${ARCH_LIB}/"
     if [[ "${ABI}" == *"64"* ]]; then
