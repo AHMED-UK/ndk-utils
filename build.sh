@@ -85,7 +85,7 @@ for ABI in "${ABIS[@]}"; do
     cmake --build build-cmake -j$(nproc) && cmake --install build-cmake
     [ -f "${PREFIX}/lib/libzstd_static.a" ] && cp "${PREFIX}/lib/libzstd_static.a" "${PREFIX}/lib/libzstd.a"
 
-    # 3. Expat (Manual Build)
+    # 3. Expat
     cd "$BUILD_DIR"
     mkdir expat && tar -xf "$SRC_CACHE/expat.tar.gz" -C expat && cd expat
     EXPAT_FLAGS="-DXML_DEV_URANDOM -DHAVE_EXPAT_CONFIG_H -I. -Iexpat/lib"
@@ -95,13 +95,13 @@ for ABI in "${ABIS[@]}"; do
     $AR rcs libexpat.a xmlparse.o xmlrole.o xmltok.o && $RANLIB libexpat.a
     cp libexpat.a "${PREFIX}/lib/" && cp expat/lib/expat.h expat/lib/expat_external.h "${PREFIX}/include/"
 
-    # 4. Libffi (Upstream)
+    # 4. Libffi
     cd "$BUILD_DIR"
     git clone --depth 1 https://github.com/libffi/libffi.git libffi && cd libffi
     ./autogen.sh && ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --disable-shared
     make -j$(nproc) install
 
-    # 5. LZMA (Manual Build)
+    # 5. LZMA
     cd "$BUILD_DIR"
     mkdir lzma && tar -xf "$SRC_CACHE/lzma.tar.gz" -C lzma && cd lzma
     LZMA_SRCS=("C/7zAlloc.c" "C/7zArcIn.c" "C/7zBuf2.c" "C/7zBuf.c" "C/7zCrc.c" "C/7zCrcOpt.c" "C/7zDec.c" "C/7zFile.c" "C/7zStream.c" "C/Aes.c" "C/AesOpt.c" "C/Alloc.c" "C/Bcj2.c" "C/Bra86.c" "C/Bra.c" "C/BraIA64.c" "C/CpuArch.c" "C/Delta.c" "C/LzFind.c" "C/Lzma2Dec.c" "C/Lzma2Enc.c" "C/Lzma86Dec.c" "C/Lzma86Enc.c" "C/LzmaDec.c" "C/LzmaEnc.c" "C/LzmaLib.c" "C/Ppmd7.c" "C/Ppmd7Dec.c" "C/Ppmd7Enc.c" "C/Sha256.c" "C/Sha256Opt.c" "C/Sort.c" "C/Xz.c" "C/XzCrc64.c" "C/XzCrc64Opt.c" "C/XzDec.c" "C/XzEnc.c" "C/XzIn.c")
@@ -110,7 +110,7 @@ for ABI in "${ABIS[@]}"; do
     $AR rcs liblzma.a *.o && $RANLIB liblzma.a
     mkdir -p "${PREFIX}/include/lzma" && cp liblzma.a "${PREFIX}/lib/" && cp C/*.h "${PREFIX}/include/lzma/"
 
-    # 6. Bzip2 (Manual Build)
+    # 6. Bzip2
     cd "$BUILD_DIR"
     mkdir bzip2 && tar -xf "$SRC_CACHE/bzip2.tar.gz" -C bzip2 && cd bzip2
     $CC $CFLAGS -c blocksort.c huffman.c crctable.c randtable.c compress.c decompress.c bzlib.c
@@ -118,14 +118,16 @@ for ABI in "${ABIS[@]}"; do
     cp libbz2.a "${PREFIX}/lib/" && cp bzlib.h "${PREFIX}/include/"
 
     # 7. OpenSSL (Upstream 3.6.3)
+    # Optimized to only build libraries to avoid command-line app linking errors
     cd "$BUILD_DIR"
     mkdir openssl && tar -xf "$SRC_CACHE/openssl.tar.gz" -C openssl --strip-components=1 && cd openssl
     if [ "${ABI}" = "arm64-v8a" ]; then OSSL_T="linux-aarch64";
     elif [ "${ABI}" = "armeabi-v7a" ]; then OSSL_T="linux-armv4";
     elif [ "${ABI}" = "x86_64" ]; then OSSL_T="linux-x86_64";
     elif [ "${ABI}" = "x86" ]; then OSSL_T="linux-elf"; fi
-    ./Configure "${OSSL_T}" no-shared no-tests --prefix="${PREFIX}" --libdir="lib" -D__ANDROID_API__=$API $CFLAGS
-    make -j$(nproc) install_sw
+    ./Configure "${OSSL_T}" no-shared no-tests no-unit-test --prefix="${PREFIX}" --libdir="lib" -D__ANDROID_API__=$API $CFLAGS
+    make -j$(nproc) build_libs
+    make install_dev
 
     # 8. SQLite
     cd "$BUILD_DIR"
@@ -145,7 +147,7 @@ for ABI in "${ABIS[@]}"; do
     ./autogen.sh && ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --without-python3
     make -j$(nproc) install
 
-    # 11. util-linux (Y2038 Fix applied here)
+    # 11. util-linux (Y2038 Fix)
     cd "$BUILD_DIR"
     mkdir utl && tar -xf "$SRC_CACHE/util-linux.tar.gz" -C utl --strip-components=1 && cd utl
     UTL_EXTRA=""
@@ -176,6 +178,7 @@ for ABI in "${ABIS[@]}"; do
 
     # Final Merging
     cp -rp "${PREFIX}/include"/* "${STAGING_DIR}/include/"
+    cp -rp "${PREFIX}/bin"/* "${STAGING_DIR}/bin/"
     ARCH_LIB="${STAGING_DIR}/lib/${TRIPLE}"
     mkdir -p "${ARCH_LIB}" && cp -rp "${PREFIX}/lib"/* "${ARCH_LIB}/"
     if [[ "${ABI}" == *"64"* ]]; then
