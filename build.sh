@@ -5,8 +5,14 @@ set -e
 ABIS=("arm64-v8a" "armeabi-v7a" "x86_64" "x86")
 API="35"
 
-# Install bootstrap Go
-sudo apt-get update && sudo apt-get install -y golang-go
+# Install missing build tools and bootstrap Go
+sudo apt-get update && sudo apt-get install -y \
+    golang-go \
+    autoconf \
+    automake \
+    libtool \
+    pkg-config \
+    texinfo
 
 # Destination for the unified ZIP package
 ARTIFACTS_DIR="/artifacts"
@@ -85,29 +91,24 @@ for ABI in "${ABIS[@]}"; do
     [ -f "${PREFIX}/lib/libzstd_static.a" ] && cp "${PREFIX}/lib/libzstd_static.a" "${PREFIX}/lib/libzstd.a"
     cd ..
 
-    # 3. Expat (main archive - Manual Build with Entropy Fix)
+    # 3. Expat (main archive)
     mkdir -p expat && cd expat
     google_download "https://android.googlesource.com/platform/external/expat/+archive/refs/heads/main.tar.gz" "expat.tar.gz"
     tar -xzf expat.tar.gz && rm expat.tar.gz
-    
-    # Define XML_DEV_URANDOM to satisfy entropy requirements on Android
     EXPAT_FLAGS="-DXML_DEV_URANDOM -DHAVE_EXPAT_CONFIG_H -I. -Iexpat/lib"
-    
     $CC $CFLAGS $EXPAT_FLAGS -c expat/lib/xmlparse.c -o xmlparse.o
     $CC $CFLAGS $EXPAT_FLAGS -c expat/lib/xmlrole.c -o xmlrole.o
     $CC $CFLAGS $EXPAT_FLAGS -c expat/lib/xmltok.c -o xmltok.o
-    
     $AR rcs libexpat.a xmlparse.o xmlrole.o xmltok.o
     $RANLIB libexpat.a
-    
     mkdir -p "${PREFIX}/lib" "${PREFIX}/include"
-    cp libexpat.a "${PREFIX}/lib/"
-    cp expat/lib/expat.h expat/lib/expat_external.h "${PREFIX}/include/"
+    cp libexpat.a "${PREFIX}/lib/" && cp expat/lib/expat.h expat/lib/expat_external.h "${PREFIX}/include/"
     cd ..
 
     # 4. Libffi
     git clone --depth 1 https://android.googlesource.com/platform/external/libffi libffi
-    cd libffi && ./autogen.sh
+    cd libffi
+    ./autogen.sh
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --disable-shared
     make -j$(nproc) install && cd ..
 
