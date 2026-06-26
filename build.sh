@@ -36,9 +36,10 @@ for ABI in "${ABIS[@]}"; do
     TRIPLE=$(get_triple "${ABI}")
     echo "==================== ABI: ${ABI} (${TRIPLE}) ===================="
 
-    # Toolchain setup
+    # Correct Toolchain setup using Dockerfile wrappers
     export CC="${TRIPLE}${API}-clang"
-    export CXX="${TRIPLE}${ABI}${API}-clang++" # Fixed variable name
+    export CXX="${TRIPLE}${API}-clang++"
+    
     ABS_AR=$(which llvm-ar); ABS_RANLIB=$(which llvm-ranlib); ABS_NM=$(which llvm-nm)
     export AR="$ABS_AR"; export AS="llvm-as"; export RANLIB="$ABS_RANLIB"; export STRIP=$(which llvm-strip)
     
@@ -54,7 +55,15 @@ for ABI in "${ABIS[@]}"; do
     # 1. Zlib (AOSP main-kernel archive)
     mkdir -p zlib && cd zlib
     google_download "https://android.googlesource.com/platform/external/zlib/+archive/refs/heads/main-kernel.tar.gz" "zlib.tar.gz"
-    tar -xzf zlib.tar.gz && cmake -S . -B build -DCMAKE_C_COMPILER="${CC}" -DCMAKE_AR="${ABS_AR}" -DCMAKE_RANLIB="${ABS_RANLIB}" -DCMAKE_INSTALL_PREFIX="${PREFIX}" -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_SHARED_LIBS=OFF
+    tar -xzf zlib.tar.gz
+    cmake -S . -B build \
+      -DCMAKE_C_COMPILER="${CC}" \
+      -DCMAKE_CXX_COMPILER="${CXX}" \
+      -DCMAKE_AR="${ABS_AR}" \
+      -DCMAKE_RANLIB="${ABS_RANLIB}" \
+      -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
+      -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+      -DBUILD_SHARED_LIBS=OFF
     cmake --build build -j$(nproc) && cmake --install build
     [ -f "${PREFIX}/lib/libzstatic.a" ] && mv "${PREFIX}/lib/libzstatic.a" "${PREFIX}/lib/libz.a"
     cd ..
@@ -63,7 +72,14 @@ for ABI in "${ABIS[@]}"; do
     mkdir -p zstd && cd zstd
     google_download "https://android.googlesource.com/platform/external/zstd/+archive/refs/heads/main-kernel.tar.gz" "zstd.tar.gz"
     tar -xzf zstd.tar.gz
-    cmake -S build/cmake -B build-cmake -DCMAKE_C_COMPILER="${CC}" -DCMAKE_AR="${ABS_AR}" -DCMAKE_RANLIB="${ABS_RANLIB}" -DCMAKE_INSTALL_PREFIX="${PREFIX}" -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DZSTD_BUILD_SHARED=OFF -DZSTD_BUILD_STATIC=ON -DZSTD_BUILD_PROGRAMS=OFF
+    cmake -S build/cmake -B build-cmake \
+      -DCMAKE_C_COMPILER="${CC}" \
+      -DCMAKE_CXX_COMPILER="${CXX}" \
+      -DCMAKE_AR="${ABS_AR}" \
+      -DCMAKE_RANLIB="${ABS_RANLIB}" \
+      -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
+      -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+      -DZSTD_BUILD_SHARED=OFF -DZSTD_BUILD_STATIC=ON -DZSTD_BUILD_PROGRAMS=OFF
     cmake --build build-cmake -j$(nproc) && cmake --install build-cmake
     [ -f "${PREFIX}/lib/libzstd_static.a" ] && cp "${PREFIX}/lib/libzstd_static.a" "${PREFIX}/lib/libzstd.a"
     cd ..
@@ -86,7 +102,7 @@ for ABI in "${ABIS[@]}"; do
     cd libffi && ./autogen.sh && ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --disable-shared
     make -j$(nproc) install && cd ..
 
-    # 5. LZMA (AOSP Manual Build using official SDK SRC list)
+    # 5. LZMA (AOSP Manual Build using official SRC list)
     mkdir -p lzma && cd lzma
     google_download "https://android.googlesource.com/platform/external/lzma/+archive/refs/heads/main.tar.gz" "lzma.tar.gz"
     tar -xzf lzma.tar.gz
@@ -110,7 +126,6 @@ for ABI in "${ABIS[@]}"; do
     curl -L https://github.com/openssl/openssl/releases/download/openssl-3.6.3/openssl-3.6.3.tar.gz -o openssl.tar.gz
     tar -xzf openssl.tar.gz && cd openssl-3.6.3
     OSSL_TARGET="android-arm64"; [[ "${ABI}" == "armeabi-v7a" ]] && OSSL_TARGET="android-arm"; [[ "${ABI}" == "x86_64" ]] && OSSL_TARGET="android-x86_64"; [[ "${ABI}" == "x86" ]] && OSSL_TARGET="android-x86"
-    # Using Configure which picks up your wrapper CC from the environment
     ./Configure "${OSSL_TARGET}" no-shared --prefix="${PREFIX}" --libdir="lib"
     make -j$(nproc) install_sw && cd ..
 
