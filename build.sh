@@ -9,6 +9,9 @@ API="35"
 sudo apt-get update && sudo apt-get install -y \
     golang-go autoconf automake libtool pkg-config texinfo cmake curl zip
 
+# OpenSSL logic requires this specific variable
+export ANDROID_NDK_ROOT="/system"
+
 ARTIFACTS_DIR="/artifacts"
 STAGING_DIR="/tmp/all_android_libs"
 mkdir -p "${ARTIFACTS_DIR}"
@@ -36,7 +39,7 @@ for ABI in "${ABIS[@]}"; do
     TRIPLE=$(get_triple "${ABI}")
     echo "==================== ABI: ${ABI} (${TRIPLE}) ===================="
 
-    # Correct Toolchain setup using Dockerfile wrappers
+    # Toolchain setup using your Dockerfile wrappers
     export CC="${TRIPLE}${API}-clang"
     export CXX="${TRIPLE}${API}-clang++"
     
@@ -52,39 +55,25 @@ for ABI in "${ABIS[@]}"; do
     BUILD_DIR="/tmp/build-${ABI}"
     mkdir -p "${BUILD_DIR}"; cd "${BUILD_DIR}"
 
-    # 1. Zlib (AOSP main-kernel archive)
+    # 1. Zlib (AOSP main-kernel)
     mkdir -p zlib && cd zlib
     google_download "https://android.googlesource.com/platform/external/zlib/+archive/refs/heads/main-kernel.tar.gz" "zlib.tar.gz"
     tar -xzf zlib.tar.gz
-    cmake -S . -B build \
-      -DCMAKE_C_COMPILER="${CC}" \
-      -DCMAKE_CXX_COMPILER="${CXX}" \
-      -DCMAKE_AR="${ABS_AR}" \
-      -DCMAKE_RANLIB="${ABS_RANLIB}" \
-      -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
-      -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-      -DBUILD_SHARED_LIBS=OFF
+    cmake -S . -B build -DCMAKE_C_COMPILER="${CC}" -DCMAKE_CXX_COMPILER="${CXX}" -DCMAKE_AR="${ABS_AR}" -DCMAKE_RANLIB="${ABS_RANLIB}" -DCMAKE_INSTALL_PREFIX="${PREFIX}" -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_SHARED_LIBS=OFF
     cmake --build build -j$(nproc) && cmake --install build
     [ -f "${PREFIX}/lib/libzstatic.a" ] && mv "${PREFIX}/lib/libzstatic.a" "${PREFIX}/lib/libz.a"
     cd ..
 
-    # 2. Zstd (AOSP main-kernel archive)
+    # 2. Zstd (AOSP main-kernel)
     mkdir -p zstd && cd zstd
     google_download "https://android.googlesource.com/platform/external/zstd/+archive/refs/heads/main-kernel.tar.gz" "zstd.tar.gz"
     tar -xzf zstd.tar.gz
-    cmake -S build/cmake -B build-cmake \
-      -DCMAKE_C_COMPILER="${CC}" \
-      -DCMAKE_CXX_COMPILER="${CXX}" \
-      -DCMAKE_AR="${ABS_AR}" \
-      -DCMAKE_RANLIB="${ABS_RANLIB}" \
-      -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
-      -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-      -DZSTD_BUILD_SHARED=OFF -DZSTD_BUILD_STATIC=ON -DZSTD_BUILD_PROGRAMS=OFF
+    cmake -S build/cmake -B build-cmake -DCMAKE_C_COMPILER="${CC}" -DCMAKE_CXX_COMPILER="${CXX}" -DCMAKE_AR="${ABS_AR}" -DCMAKE_RANLIB="${ABS_RANLIB}" -DCMAKE_INSTALL_PREFIX="${PREFIX}" -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DZSTD_BUILD_SHARED=OFF -DZSTD_BUILD_STATIC=ON -DZSTD_BUILD_PROGRAMS=OFF
     cmake --build build-cmake -j$(nproc) && cmake --install build-cmake
     [ -f "${PREFIX}/lib/libzstd_static.a" ] && cp "${PREFIX}/lib/libzstd_static.a" "${PREFIX}/lib/libzstd.a"
     cd ..
 
-    # 3. Expat (AOSP main archive - Manual Build)
+    # 3. Expat (AOSP main - Manual Build)
     mkdir -p expat && cd expat
     google_download "https://android.googlesource.com/platform/external/expat/+archive/refs/heads/main.tar.gz" "expat.tar.gz"
     tar -xzf expat.tar.gz
@@ -102,7 +91,7 @@ for ABI in "${ABIS[@]}"; do
     cd libffi && ./autogen.sh && ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --disable-shared
     make -j$(nproc) install && cd ..
 
-    # 5. LZMA (AOSP Manual Build using official SRC list)
+    # 5. LZMA (AOSP Manual Build)
     mkdir -p lzma && cd lzma
     google_download "https://android.googlesource.com/platform/external/lzma/+archive/refs/heads/main.tar.gz" "lzma.tar.gz"
     tar -xzf lzma.tar.gz
@@ -122,11 +111,12 @@ for ABI in "${ABIS[@]}"; do
     cp libbz2.a "${PREFIX}/lib/" && cp bzlib.h "${PREFIX}/include/"
     cd ..
 
-    # 7. OpenSSL (Official Upstream 3.6.3)
+    # 7. OpenSSL (Upstream 3.6.3)
     curl -L https://github.com/openssl/openssl/releases/download/openssl-3.6.3/openssl-3.6.3.tar.gz -o openssl.tar.gz
     tar -xzf openssl.tar.gz && cd openssl-3.6.3
     OSSL_TARGET="android-arm64"; [[ "${ABI}" == "armeabi-v7a" ]] && OSSL_TARGET="android-arm"; [[ "${ABI}" == "x86_64" ]] && OSSL_TARGET="android-x86_64"; [[ "${ABI}" == "x86" ]] && OSSL_TARGET="android-x86"
-    ./Configure "${OSSL_TARGET}" no-shared --prefix="${PREFIX}" --libdir="lib"
+    # Pass the API level to OpenSSL and use the wrappers
+    ./Configure "${OSSL_TARGET}" no-shared --prefix="${PREFIX}" --libdir="lib" -D__ANDROID_API__=$API
     make -j$(nproc) install_sw && cd ..
 
     # 8. SQLite (3.53.2)
@@ -151,7 +141,7 @@ for ABI in "${ABIS[@]}"; do
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --disable-all-programs --enable-libuuid --enable-libblkid
     make -j$(nproc) install && cd ..
 
-    # 12. Ncurses (v6.5 upstream)
+    # 12. Ncurses (v6.5)
     curl -L https://github.com/mirror/ncurses/archive/refs/tags/v6.5.tar.gz -o ncurses.tar.gz
     tar -xzf ncurses.tar.gz && cd ncurses-6.5
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --without-debug --enable-widec
@@ -172,7 +162,7 @@ for ABI in "${ABIS[@]}"; do
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --disable-shared
     make -j$(nproc) install && cd ..
 
-    # Final Merging into Sysroot Structure
+    # Final Merging
     cp -rp "${PREFIX}/include"/* "${STAGING_DIR}/include/"
     ARCH_LIB="${STAGING_DIR}/lib/${TRIPLE}"
     mkdir -p "${ARCH_LIB}" && cp -rp "${PREFIX}/lib"/* "${ARCH_LIB}/"
