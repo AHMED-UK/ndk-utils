@@ -19,8 +19,8 @@ mkdir -p "${STAGING_DIR}/lib" "${STAGING_DIR}/lib64" "${STAGING_DIR}/include" "$
 # Robust download utility
 download_source() {
     local url=$1; local output="$SRC_CACHE/$2"
-    echo "Pre-downloading: $url"
     if [ ! -f "$output" ]; then
+        echo "Pre-downloading: $url"
         if ! curl -L -A "Mozilla/5.0" -f "$url" -o "$output"; then
             echo "Failed to download $url. Falling back to git clone..."
             local repo_url=${url%+archive*}
@@ -62,7 +62,6 @@ for ABI in "${ABIS[@]}"; do
 
     export CC="${TRIPLE}${API}-clang"
     export CXX="${TRIPLE}${API}-clang++"
-    export LD="ld.lld"
     export AR="llvm-ar"
     export RANLIB="llvm-ranlib"
     export STRIP="llvm-strip"
@@ -70,6 +69,7 @@ for ABI in "${ABIS[@]}"; do
     PREFIX="/tmp/install-${ABI}"
     rm -rf "${PREFIX}"; mkdir -p "${PREFIX}/lib" "${PREFIX}/include" "${PREFIX}/bin"
     
+    # Global flags for all builds
     export CFLAGS="-fPIC -O2 -I${PREFIX}/include"
     export CXXFLAGS="-fPIC -O2 -I${PREFIX}/include"
     export LDFLAGS="-L${PREFIX}/lib"
@@ -78,112 +78,92 @@ for ABI in "${ABIS[@]}"; do
     rm -rf "$BUILD_DIR"; mkdir -p "${BUILD_DIR}"
 
     # 1. Zlib
-    cd "$BUILD_DIR"
-    mkdir zlib && tar -xf "$SRC_CACHE/zlib.tar.gz" -C zlib && cd zlib
+    cd "$BUILD_DIR" && mkdir zlib && tar -xf "$SRC_CACHE/zlib.tar.gz" -C zlib && cd zlib
     cmake -S . -B build -DCMAKE_C_COMPILER="${CC}" -DCMAKE_CXX_COMPILER="${CXX}" -DCMAKE_AR="$(which llvm-ar)" -DCMAKE_RANLIB="$(which llvm-ranlib)" -DCMAKE_INSTALL_PREFIX="${PREFIX}" -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_SHARED_LIBS=OFF
     cmake --build build -j$(nproc) && cmake --install build
     [ -f "${PREFIX}/lib/libzstatic.a" ] && mv "${PREFIX}/lib/libzstatic.a" "${PREFIX}/lib/libz.a"
 
     # 2. Zstd
-    cd "$BUILD_DIR"
-    mkdir zstd && tar -xf "$SRC_CACHE/zstd.tar.gz" -C zstd && cd zstd
+    cd "$BUILD_DIR" && mkdir zstd && tar -xf "$SRC_CACHE/zstd.tar.gz" -C zstd && cd zstd
     cmake -S build/cmake -B build-cmake -DCMAKE_C_COMPILER="${CC}" -DCMAKE_AR="$(which llvm-ar)" -DCMAKE_INSTALL_PREFIX="${PREFIX}" -DZSTD_BUILD_SHARED=OFF -DZSTD_BUILD_STATIC=ON -DZSTD_BUILD_PROGRAMS=ON
     cmake --build build-cmake -j$(nproc) && cmake --install build-cmake
     [ -f "${PREFIX}/lib/libzstd_static.a" ] && cp "${PREFIX}/lib/libzstd_static.a" "${PREFIX}/lib/libzstd.a"
 
     # 3. Expat
-    cd "$BUILD_DIR"
-    mkdir expat && tar -xf "$SRC_CACHE/expat.tar.gz" -C expat && cd expat
-    EXPAT_FLAGS="-DXML_DEV_URANDOM -DHAVE_EXPAT_CONFIG_H -I. -Iexpat/lib"
-    $CC $CFLAGS $EXPAT_FLAGS -c expat/lib/xmlparse.c -o xmlparse.o
-    $CC $CFLAGS $EXPAT_FLAGS -c expat/lib/xmlrole.c -o xmlrole.o
-    $CC $CFLAGS $EXPAT_FLAGS -c expat/lib/xmltok.c -o xmltok.o
+    cd "$BUILD_DIR" && mkdir expat && tar -xf "$SRC_CACHE/expat.tar.gz" -C expat && cd expat
+    $CC $CFLAGS -DXML_DEV_URANDOM -DHAVE_EXPAT_CONFIG_H -I. -Iexpat/lib -c expat/lib/xmlparse.c expat/lib/xmlrole.c expat/lib/xmltok.c
     $AR rcs libexpat.a xmlparse.o xmlrole.o xmltok.o && $RANLIB libexpat.a
     cp libexpat.a "${PREFIX}/lib/" && cp expat/lib/expat.h expat/lib/expat_external.h "${PREFIX}/include/"
 
     # 4. Libffi
-    cd "$BUILD_DIR"
-    git clone --depth 1 https://github.com/libffi/libffi.git libffi && cd libffi
+    cd "$BUILD_DIR" && git clone --depth 1 https://github.com/libffi/libffi.git libffi && cd libffi
     ./autogen.sh && ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --disable-shared
     make -j$(nproc) install
 
     # 5. LZMA
-    cd "$BUILD_DIR"
-    mkdir lzma && tar -xf "$SRC_CACHE/lzma.tar.gz" -C lzma && cd lzma
+    cd "$BUILD_DIR" && mkdir lzma && tar -xf "$SRC_CACHE/lzma.tar.gz" -C lzma && cd lzma
     LZMA_SRCS=("C/7zAlloc.c" "C/7zArcIn.c" "C/7zBuf2.c" "C/7zBuf.c" "C/7zCrc.c" "C/7zCrcOpt.c" "C/7zDec.c" "C/7zFile.c" "C/7zStream.c" "C/Aes.c" "C/AesOpt.c" "C/Alloc.c" "C/Bcj2.c" "C/Bra86.c" "C/Bra.c" "C/BraIA64.c" "C/CpuArch.c" "C/Delta.c" "C/LzFind.c" "C/Lzma2Dec.c" "C/Lzma2Enc.c" "C/Lzma86Dec.c" "C/Lzma86Enc.c" "C/LzmaDec.c" "C/LzmaEnc.c" "C/LzmaLib.c" "C/Ppmd7.c" "C/Ppmd7Dec.c" "C/Ppmd7Enc.c" "C/Sha256.c" "C/Sha256Opt.c" "C/Sort.c" "C/Xz.c" "C/XzCrc64.c" "C/XzCrc64Opt.c" "C/XzDec.c" "C/XzEnc.c" "C/XzIn.c")
-    LZMA_FLAGS="-DZ7_ST -Wall -Wno-empty-body -Wno-enum-conversion -Wno-logical-op-parentheses -Wno-self-assign"
-    for src in "${LZMA_SRCS[@]}"; do $CC $CFLAGS $LZMA_FLAGS -IC/ -c "$src" -o "$(basename ${src%.c}.o)"; done
+    for src in "${LZMA_SRCS[@]}"; do $CC $CFLAGS -DZ7_ST -Wall -Wno-self-assign -IC/ -c "$src" -o "$(basename ${src%.c}.o)"; done
     $AR rcs liblzma.a *.o && $RANLIB liblzma.a
     mkdir -p "${PREFIX}/include/lzma" && cp liblzma.a "${PREFIX}/lib/" && cp C/*.h "${PREFIX}/include/lzma/"
 
     # 6. Bzip2
-    cd "$BUILD_DIR"
-    mkdir bzip2 && tar -xf "$SRC_CACHE/bzip2.tar.gz" -C bzip2 && cd bzip2
+    cd "$BUILD_DIR" && mkdir bzip2 && tar -xf "$SRC_CACHE/bzip2.tar.gz" -C bzip2 && cd bzip2
     $CC $CFLAGS -c blocksort.c huffman.c crctable.c randtable.c compress.c decompress.c bzlib.c
     $AR rcs libbz2.a *.o && $RANLIB libbz2.a
     cp libbz2.a "${PREFIX}/lib/" && cp bzlib.h "${PREFIX}/include/"
 
     # 7. OpenSSL
-    cd "$BUILD_DIR"
-    mkdir openssl && tar -xf "$SRC_CACHE/openssl.tar.gz" -C openssl --strip-components=1 && cd openssl
+    cd "$BUILD_DIR" && mkdir openssl && tar -xf "$SRC_CACHE/openssl.tar.gz" -C openssl --strip-components=1 && cd openssl
     if [ "${ABI}" = "arm64-v8a" ]; then OSSL_T="linux-aarch64";
     elif [ "${ABI}" = "armeabi-v7a" ]; then OSSL_T="linux-armv4";
     elif [ "${ABI}" = "x86_64" ]; then OSSL_T="linux-x86_64";
     elif [ "${ABI}" = "x86" ]; then OSSL_T="linux-elf"; fi
     ./Configure "${OSSL_T}" no-shared no-tests no-unit-test --prefix="${PREFIX}" --libdir="lib" -D__ANDROID_API__=$API $CFLAGS
-    make -j$(nproc) build_libs
-    make install_dev
+    make -j$(nproc) build_libs && make install_dev
 
     # 8. Ncurses
-    cd "$BUILD_DIR"
-    mkdir ncu && tar -xf "$SRC_CACHE/ncurses.tar.gz" -C ncu --strip-components=1 && cd ncu
+    cd "$BUILD_DIR" && mkdir ncu && tar -xf "$SRC_CACHE/ncurses.tar.gz" -C ncu --strip-components=1 && cd ncu
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
                 --enable-static --without-debug --enable-widec \
                 --with-build-cc=gcc --disable-stripping
     make -j$(nproc) install
-    # Create compatibility symlinks
     ln -sf libncursesw.a "${PREFIX}/lib/libncurses.a"
     ln -sf libncursesw.a "${PREFIX}/lib/libtinfo.a"
     ln -sf libncursesw.a "${PREFIX}/lib/libtermcap.a"
 
     # 9. Readline
-    cd "$BUILD_DIR"
-    mkdir rl && tar -xf "$SRC_CACHE/readline.tar.gz" -C rl --strip-components=1 && cd rl
+    cd "$BUILD_DIR" && mkdir rl && tar -xf "$SRC_CACHE/readline.tar.gz" -C rl --strip-components=1 && cd rl
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
                 --enable-static --disable-shared --with-curses \
                 CPPFLAGS="-I${PREFIX}/include" LDFLAGS="-L${PREFIX}/lib" \
                 bash_cv_wcwidth_broken=no
-    make -j$(nproc)
-    # Avoid example install errors
-    make install-static install-headers install-pc
+    make -j$(nproc) && make install-static install-headers install-pc
 
-    # 10. SQLite (Fixed for Readline detection)
-    cd "$BUILD_DIR"
-    git clone --depth 1 -b version-3.53.2 https://github.com/sqlite/sqlite.git sqlite && cd sqlite
-    # Use specific flags to bypass failing auto-detection during cross-compilation
+    # 10. SQLite (FIXED: Explicitly link math library and readline)
+    cd "$BUILD_DIR" && git clone --depth 1 -b version-3.53.2 https://github.com/sqlite/sqlite.git sqlite || git clone --depth 1 https://github.com/sqlite/sqlite.git sqlite
+    cd sqlite
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
                 --enable-static --disable-tcl --readline \
                 --with-readline-cflags="-I${PREFIX}/include" \
-                --with-readline-ldflags="-L${PREFIX}/lib -lreadline -lncursesw" \
+                --with-readline-ldflags="-L${PREFIX}/lib" \
+                --with-readline-libs="-lreadline -lncursesw" \
                 CC="$CC" \
-                LIBS="-lz -lm"
+                LIBS="-lm -lz"
     make -j$(nproc) install
 
     # 11. mpdecimal
-    cd "$BUILD_DIR"
-    mkdir mpdec && tar -xf "$SRC_CACHE/mpdec.tar.gz" -C mpdec --strip-components=1 && cd mpdec
+    cd "$BUILD_DIR" && mkdir mpdec && tar -xf "$SRC_CACHE/mpdec.tar.gz" -C mpdec --strip-components=1 && cd mpdec
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static
     make -j$(nproc) install
 
     # 12. libcap-ng
-    cd "$BUILD_DIR"
-    git clone --depth 1 -b v0.9.3 https://github.com/stevegrubb/libcap-ng.git libcap && cd libcap
+    cd "$BUILD_DIR" && git clone --depth 1 -b v0.9.3 https://github.com/stevegrubb/libcap-ng.git libcap && cd libcap
     ./autogen.sh && ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --without-python3
     make -j$(nproc) install
 
     # 13. util-linux
-    cd "$BUILD_DIR"
-    mkdir utl && tar -xf "$SRC_CACHE/util-linux.tar.gz" -C utl --strip-components=1 && cd utl
+    cd "$BUILD_DIR" && mkdir utl && tar -xf "$SRC_CACHE/util-linux.tar.gz" -C utl --strip-components=1 && cd utl
     UTL_EXTRA=""
     if [[ "$ABI" == "armeabi-v7a" || "$ABI" == "x86" ]]; then UTL_EXTRA="--disable-year2038"; fi
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
@@ -191,16 +171,14 @@ for ABI in "${ABIS[@]}"; do
     make -j$(nproc) install
 
     # 14. Go Toolchain
-    cd "$BUILD_DIR"
-    git clone --depth 1 -b go1.26.4 https://github.com/golang/go.git go && cd go/src
+    cd "$BUILD_DIR" && git clone --depth 1 -b go1.26.4 https://github.com/golang/go.git go && cd go/src
     export GOROOT_BOOTSTRAP=/usr/lib/go
     GOARCH_VAL="arm64"; [[ "${ABI}" == "armeabi-v7a" ]] && GOARCH_VAL="arm"; [[ "${ABI}" == "x86_64" ]] && GOARCH_VAL="amd64"; [[ "${ABI}" == "x86" ]] && GOARCH_VAL="386"
     GOOS=android GOARCH="${GOARCH_VAL}" CGO_ENABLED=1 CC="${CC}" ./make.bash --no-clean
     mkdir -p "${PREFIX}/share/go" && cp -r ../bin ../pkg "${PREFIX}/share/go/"
 
     # 15. libxcrypt
-    cd "$BUILD_DIR"
-    mkdir xcr && tar -xf "$SRC_CACHE/xcrypt.tar.xz" -C xcr --strip-components=1 && cd xcr
+    cd "$BUILD_DIR" && mkdir xcr && tar -xf "$SRC_CACHE/xcrypt.tar.xz" -C xcr --strip-components=1 && cd xcr
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --disable-shared
     make -j$(nproc) install
 
@@ -213,8 +191,7 @@ for ABI in "${ABIS[@]}"; do
         mkdir -p "${ARCH_LIB64}" && cp -rp "${PREFIX}/lib"/* "${ARCH_LIB64}/"
     fi
     ARCH_BIN="${STAGING_DIR}/bin/${TRIPLE}"
-    mkdir -p "${ARCH_BIN}"
-    [ -d "${PREFIX}/bin" ] && cp -rp "${PREFIX}/bin"/* "${ARCH_BIN}/"
+    mkdir -p "${ARCH_BIN}" && [ -d "${PREFIX}/bin" ] && cp -rp "${PREFIX}/bin"/* "${ARCH_BIN}/"
     cp -rp "${PREFIX}/share"/* "${STAGING_DIR}/share/"
 done
 
