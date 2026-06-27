@@ -141,8 +141,10 @@ for ABI in "${ABIS[@]}"; do
                 --enable-static --without-debug --enable-widec \
                 --with-build-cc=gcc --disable-stripping
     make -j$(nproc) install
+    # Create compatibility symlinks
     ln -sf libncursesw.a "${PREFIX}/lib/libncurses.a"
     ln -sf libncursesw.a "${PREFIX}/lib/libtinfo.a"
+    ln -sf libncursesw.a "${PREFIX}/lib/libtermcap.a"
 
     # 9. Readline
     cd "$BUILD_DIR"
@@ -152,18 +154,19 @@ for ABI in "${ABIS[@]}"; do
                 CPPFLAGS="-I${PREFIX}/include" LDFLAGS="-L${PREFIX}/lib" \
                 bash_cv_wcwidth_broken=no
     make -j$(nproc)
+    # Avoid example install errors
     make install-static install-headers install-pc
 
     # 10. SQLite (Fixed for Readline detection)
     cd "$BUILD_DIR"
     git clone --depth 1 -b version-3.53.2 https://github.com/sqlite/sqlite.git sqlite && cd sqlite
-    # We pass READLINE_LIBS to bypass the failing link check in autosetup
+    # Use specific flags to bypass failing auto-detection during cross-compilation
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
                 --enable-static --disable-tcl --readline \
+                --with-readline-cflags="-I${PREFIX}/include" \
+                --with-readline-ldflags="-L${PREFIX}/lib -lreadline -lncursesw" \
                 CC="$CC" \
-                LDFLAGS="-L${PREFIX}/lib" \
-                CPPFLAGS="-I${PREFIX}/include" \
-                LIBS="-lreadline -lncursesw -lz -lm"
+                LIBS="-lz -lm"
     make -j$(nproc) install
 
     # 11. mpdecimal
