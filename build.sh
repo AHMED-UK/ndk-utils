@@ -63,10 +63,10 @@ for ABI in "${ABIS[@]}"; do
     ABS_AR=$(which llvm-ar); ABS_RANLIB=$(which llvm-ranlib)
     export AR="$ABS_AR"; export AS="llvm-as"; export RANLIB="$ABS_RANLIB"; export STRIP=$(which llvm-strip)
     
-    ABI_INSTALL_ROOT="/tmp/install-${ABI}"
-    rm -rf "${ABI_INSTALL_ROOT}"; mkdir -p "${ABI_INSTALL_ROOT}/lib" "${ABI_INSTALL_ROOT}/include" "${ABI_INSTALL_ROOT}/bin"
+    PREFIX="/tmp/install-${ABI}"
+    rm -rf "${PREFIX}"; mkdir -p "${PREFIX}/lib" "${PREFIX}/include" "${PREFIX}/bin"
     
-    export PREFIX="${ABI_INSTALL_ROOT}"
+    export PREFIX
     export CFLAGS="-fPIC -O2"; export CXXFLAGS="-fPIC -O2"
 
     BUILD_DIR="/tmp/build-${ABI}"
@@ -82,7 +82,7 @@ for ABI in "${ABIS[@]}"; do
     # 2. Zstd
     cd "$BUILD_DIR"
     mkdir zstd && tar -xf "$SRC_CACHE/zstd.tar.gz" -C zstd && cd zstd
-    cmake -S build/cmake -B build-cmake -DCMAKE_C_COMPILER="${CC}" -DCMAKE_CXX_COMPILER="${CXX}" -DCMAKE_AR="${AR}" -DCMAKE_RANLIB="${RANLIB}" -DCMAKE_INSTALL_PREFIX="${PREFIX}" -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DZSTD_BUILD_SHARED=OFF -DZSTD_BUILD_STATIC=ON -DZSTD_BUILD_PROGRAMS=ON
+    cmake -S build/cmake -B build-cmake -DCMAKE_C_COMPILER="${CC}" -DCMAKE_AR="${AR}" -DCMAKE_INSTALL_PREFIX="${PREFIX}" -DZSTD_BUILD_SHARED=OFF -DZSTD_BUILD_STATIC=ON -DZSTD_BUILD_PROGRAMS=ON
     cmake --build build-cmake -j$(nproc) && cmake --install build-cmake
     [ -f "${PREFIX}/lib/libzstd_static.a" ] && cp "${PREFIX}/lib/libzstd_static.a" "${PREFIX}/lib/libzstd.a"
 
@@ -129,31 +129,36 @@ for ABI in "${ABIS[@]}"; do
     make -j$(nproc) build_libs
     make install_dev
 
-    # 8. Ncurses (Moved up to support Readline)
+    # 8. Ncurses (Required for Readline)
     cd "$BUILD_DIR"
     mkdir ncu && tar -xf "$SRC_CACHE/ncurses.tar.gz" -C ncu --strip-components=1 && cd ncu
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
                 --enable-static --without-debug --enable-widec \
                 --with-build-cc=gcc --disable-stripping
     make -j$(nproc) install
+    # Create compatibility symlinks for tools looking for non-wide ncurses
+    ln -sf libncursesw.a "${PREFIX}/lib/libncurses.a"
+    ln -sf libncursesw.a "${PREFIX}/lib/libtinfo.a"
 
-    # 9. Readline (New Step)
+    # 9. Readline
     cd "$BUILD_DIR"
     mkdir rl && tar -xf "$SRC_CACHE/readline.tar.gz" -C rl --strip-components=1 && cd rl
-    # Point to the ncurses we just built
-    export CPPFLAGS="-I${PREFIX}/include"
-    export LDFLAGS="-L${PREFIX}/lib"
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
                 --enable-static --disable-shared --with-curses \
+                CPPFLAGS="-I${PREFIX}/include" LDFLAGS="-L${PREFIX}/lib" \
                 bash_cv_wcwidth_broken=no
     make -j$(nproc)
     make install
 
-    # 10. SQLite (Now with Readline support)
+    # 10. SQLite (Fixed for Readline detection)
     cd "$BUILD_DIR"
     git clone --depth 1 -b version-3.53.2 https://github.com/sqlite/sqlite.git sqlite && cd sqlite
+    # We pass CFLAGS/LDFLAGS/LIBS directly to ensure the cross-compiler finds our local build of readline/ncurses
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
-                --enable-static --disable-tcl --enable-readline
+                --enable-static --disable-tcl --enable-readline \
+                CFLAGS="$CFLAGS -I${PREFIX}/include" \
+                LDFLAGS="$LDFLAGS -L${PREFIX}/lib" \
+                LIBS="-lreadline -lncursesw"
     make -j$(nproc) install
 
     # 11. mpdecimal
@@ -191,30 +196,19 @@ for ABI in "${ABIS[@]}"; do
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --disable-shared
     make -j$(nproc) install
 
-    # ===================================================
-    # Final Merging into Staging Root
-    # ===================================================
+    # Final Merging
     cp -rp "${PREFIX}/include"/* "${STAGING_DIR}/include/"
-    
-    # Merge Libs
     ARCH_LIB="${STAGING_DIR}/lib/${TRIPLE}"
     mkdir -p "${ARCH_LIB}" && cp -rp "${PREFIX}/lib"/* "${ARCH_LIB}/"
     if [[ "${ABI}" == *"64"* ]]; then
         ARCH_LIB64="${STAGING_DIR}/lib64/${TRIPLE}"
         mkdir -p "${ARCH_LIB64}" && cp -rp "${PREFIX}/lib"/* "${ARCH_LIB64}/"
     fi
-
-    # Merge Binaries
     ARCH_BIN="${STAGING_DIR}/bin/${TRIPLE}"
     mkdir -p "${ARCH_BIN}"
-    if [ -d "${PREFIX}/bin" ]; then
-        cp -rp "${PREFIX}/bin"/* "${ARCH_BIN}/"
-    fi
-
-    # Merge Shared Files
+    [ -d "${PREFIX}/bin" ] && cp -rp "${PREFIX}/bin"/* "${ARCH_BIN}/"
     cp -rp "${PREFIX}/share"/* "${STAGING_DIR}/share/"
 done
 
-# Final Packaging
 cd "${STAGING_DIR}"
 zip -r "${ARTIFACTS_DIR}/android_libs.zip" include lib lib64 share bin
