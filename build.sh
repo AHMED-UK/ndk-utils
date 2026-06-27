@@ -1,38 +1,37 @@
 #!/usr/bin/env bash
 set -e
 
-# Configuration
+# Target Android ABIs
 ABIS=("arm64-v8a" "armeabi-v7a" "x86_64" "x86")
 API="35"
-ARTIFACTS_DIR="/artifacts"
-STAGING_DIR="/tmp/all_android_libs"
-SRC_CACHE="/tmp/source_cache"
 
-# 0. Setup
+# 0. Environment Setup & Tool Installation
 sudo apt-get update && sudo apt-get install -y \
     golang-go autoconf automake libtool pkg-config texinfo cmake curl zip git
 
+ARTIFACTS_DIR="/artifacts"
+STAGING_DIR="/tmp/all_android_libs"
+SRC_CACHE="/tmp/source_cache"
 mkdir -p "${ARTIFACTS_DIR}" "${SRC_CACHE}"
 rm -rf "${STAGING_DIR}"
 mkdir -p "${STAGING_DIR}/lib" "${STAGING_DIR}/lib64" "${STAGING_DIR}/include" "${STAGING_DIR}/share" "${STAGING_DIR}/bin"
 
-# Utility: Download once to prevent throttling
+# Robust download utility
 download_source() {
     local url=$1; local output="$SRC_CACHE/$2"
-    if [ ! -f "$output" ]; then
-        echo "Downloading: $url"
-        curl -L -A "Mozilla/5.0" -f "$url" -o "$output" || {
-            if [[ "$url" == *"googlesource"* ]]; then
-                echo "Google Archive failed. Cloning instead..."
-                local repo=${url%+archive*}; local branch=${url##*heads/}; branch=${branch%.tar.gz}
-                git clone --depth 1 -b "$branch" "$repo" "/tmp/clone_$2"
-                tar -czf "$output" -C "/tmp/clone_$2" . && rm -rf "/tmp/clone_$2"
-            else exit 1; fi
-        }
+    echo "Pre-downloading: $url"
+    if ! curl -L -A "Mozilla/5.0" -f "$url" -o "$output"; then
+        echo "Failed to download $url. Falling back to git clone..."
+        local repo_url=${url%+archive*}
+        local branch=${url##*heads/}; branch=${branch%.tar.gz}
+        local tmp_clone="/tmp/clone_$(basename $2 .tar.gz)"
+        git clone --depth 1 -b "$branch" "$repo_url" "$tmp_clone"
+        tar -czf "$output" -C "$tmp_clone" .
+        rm -rf "$tmp_clone"
     fi
 }
 
-# Pre-download everything
+# --- PRE-DOWNLOAD SECTION ---
 download_source "https://android.googlesource.com/platform/external/zlib/+archive/refs/heads/main-kernel.tar.gz" "zlib.tar.gz"
 download_source "https://android.googlesource.com/platform/external/zstd/+archive/refs/heads/main-kernel.tar.gz" "zstd.tar.gz"
 download_source "https://android.googlesource.com/platform/external/expat/+archive/refs/heads/main.tar.gz" "expat.tar.gz"
@@ -42,8 +41,10 @@ curl -L https://github.com/openssl/openssl/releases/download/openssl-3.6.3/opens
 curl -L https://github.com/bolangocuyen/mpdecimal/archive/refs/tags/v4.0.1.tar.gz -o "$SRC_CACHE/mpdec.tar.gz"
 curl -L https://www.kernel.org/pub/linux/utils/util-linux/v2.42/util-linux-2.42.2.tar.gz -o "$SRC_CACHE/util-linux.tar.gz"
 curl -L https://ftp.gnu.org/pub/gnu/ncurses/ncurses-6.5.tar.gz -o "$SRC_CACHE/ncurses.tar.gz"
+curl -L https://ftp.gnu.org/pub/gnu/readline/readline-8.2.tar.gz -o "$SRC_CACHE/readline.tar.gz"
 curl -L https://github.com/besser82/libxcrypt/releases/download/v4.5.2/libxcrypt-4.5.2.tar.xz -o "$SRC_CACHE/xcrypt.tar.xz"
 
+# --- COMPILATION LOOP ---
 get_triple() {
     case $1 in
         "arm64-v8a")   echo "aarch64-linux-android" ;;
@@ -55,92 +56,165 @@ get_triple() {
 
 for ABI in "${ABIS[@]}"; do
     TRIPLE=$(get_triple "${ABI}")
-    echo ">>> Building $ABI ($TRIPLE)"
+    echo "==================== ABI: ${ABI} (${TRIPLE}) ===================="
+
+    export CC="${TRIPLE}${API}-clang"
+    export CXX="${TRIPLE}${API}-clang++"
+    ABS_AR=$(which llvm-ar); ABS_RANLIB=$(which llvm-ranlib)
+    export AR="$ABS_AR"; export AS="llvm-as"; export RANLIB="$ABS_RANLIB"; export STRIP=$(which llvm-strip)
     
-    export CC="${TRIPLE}${API}-clang"; export CXX="${TRIPLE}${API}-clang++"
-    export AR=$(which llvm-ar); export RANLIB=$(which llvm-ranlib); export STRIP=$(which llvm-strip)
+    ABI_INSTALL_ROOT="/tmp/install-${ABI}"
+    rm -rf "${ABI_INSTALL_ROOT}"; mkdir -p "${ABI_INSTALL_ROOT}/lib" "${ABI_INSTALL_ROOT}/include" "${ABI_INSTALL_ROOT}/bin"
+    
+    export PREFIX="${ABI_INSTALL_ROOT}"
     export CFLAGS="-fPIC -O2"; export CXXFLAGS="-fPIC -O2"
-    
-    PREFIX="/tmp/install-$ABI"; rm -rf "$PREFIX"; mkdir -p "$PREFIX/lib" "$PREFIX/include" "$PREFIX/bin"
-    BUILD_DIR="/tmp/build-$ABI"; rm -rf "$BUILD_DIR"; mkdir -p "$BUILD_DIR"
+
+    BUILD_DIR="/tmp/build-${ABI}"
+    rm -rf "$BUILD_DIR"; mkdir -p "${BUILD_DIR}"
 
     # 1. Zlib
-    cd "$BUILD_DIR"; mkdir zlib; tar -xf "$SRC_CACHE/zlib.tar.gz" -C zlib; cd zlib
-    cmake -S . -B build -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX" -DCMAKE_AR="$AR" -DCMAKE_RANLIB="$RANLIB" -DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_SHARED_LIBS=OFF
+    cd "$BUILD_DIR"
+    mkdir zlib && tar -xf "$SRC_CACHE/zlib.tar.gz" -C zlib && cd zlib
+    cmake -S . -B build -DCMAKE_C_COMPILER="${CC}" -DCMAKE_CXX_COMPILER="${CXX}" -DCMAKE_AR="${AR}" -DCMAKE_RANLIB="${RANLIB}" -DCMAKE_INSTALL_PREFIX="${PREFIX}" -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_SHARED_LIBS=OFF
     cmake --build build -j$(nproc) && cmake --install build
-    [ -f "$PREFIX/lib/libzstatic.a" ] && mv "$PREFIX/lib/libzstatic.a" "$PREFIX/lib/libz.a"
+    [ -f "${PREFIX}/lib/libzstatic.a" ] && mv "${PREFIX}/lib/libzstatic.a" "${PREFIX}/lib/libz.a"
 
     # 2. Zstd
-    cd "$BUILD_DIR"; mkdir zstd; tar -xf "$SRC_CACHE/zstd.tar.gz" -C zstd; cd zstd
-    cmake -S build/cmake -B build -DCMAKE_C_COMPILER="$CC" -DCMAKE_AR="$AR" -DCMAKE_INSTALL_PREFIX="$PREFIX" -DZSTD_BUILD_SHARED=OFF -DZSTD_BUILD_STATIC=ON -DZSTD_BUILD_PROGRAMS=ON
-    cmake --build build -j$(nproc) && cmake --install build
-    [ -f "$PREFIX/lib/libzstd_static.a" ] && cp "$PREFIX/lib/libzstd_static.a" "$PREFIX/lib/libzstd.a"
+    cd "$BUILD_DIR"
+    mkdir zstd && tar -xf "$SRC_CACHE/zstd.tar.gz" -C zstd && cd zstd
+    cmake -S build/cmake -B build-cmake -DCMAKE_C_COMPILER="${CC}" -DCMAKE_CXX_COMPILER="${CXX}" -DCMAKE_AR="${AR}" -DCMAKE_RANLIB="${RANLIB}" -DCMAKE_INSTALL_PREFIX="${PREFIX}" -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DZSTD_BUILD_SHARED=OFF -DZSTD_BUILD_STATIC=ON -DZSTD_BUILD_PROGRAMS=ON
+    cmake --build build-cmake -j$(nproc) && cmake --install build-cmake
+    [ -f "${PREFIX}/lib/libzstd_static.a" ] && cp "${PREFIX}/lib/libzstd_static.a" "${PREFIX}/lib/libzstd.a"
 
     # 3. Expat
-    cd "$BUILD_DIR"; mkdir expat; tar -xf "$SRC_CACHE/expat.tar.gz" -C expat; cd expat
-    $CC $CFLAGS -DXML_DEV_URANDOM -DHAVE_EXPAT_CONFIG_H -I. -Iexpat/lib -c expat/lib/xmlparse.c expat/lib/xmlrole.c expat/lib/xmltok.c
-    $AR rcs libexpat.a *.o && $RANLIB libexpat.a
-    cp libexpat.a "$PREFIX/lib/" && cp expat/lib/expat*.h "$PREFIX/include/"
+    cd "$BUILD_DIR"
+    mkdir expat && tar -xf "$SRC_CACHE/expat.tar.gz" -C expat && cd expat
+    EXPAT_FLAGS="-DXML_DEV_URANDOM -DHAVE_EXPAT_CONFIG_H -I. -Iexpat/lib"
+    $CC $CFLAGS $EXPAT_FLAGS -c expat/lib/xmlparse.c -o xmlparse.o
+    $CC $CFLAGS $EXPAT_FLAGS -c expat/lib/xmlrole.c -o xmlrole.o
+    $CC $CFLAGS $EXPAT_FLAGS -c expat/lib/xmltok.c -o xmltok.o
+    $AR rcs libexpat.a xmlparse.o xmlrole.o xmltok.o && $RANLIB libexpat.a
+    cp libexpat.a "${PREFIX}/lib/" && cp expat/lib/expat.h expat/lib/expat_external.h "${PREFIX}/include/"
 
     # 4. Libffi
-    cd "$BUILD_DIR"; git clone --depth 1 https://github.com/libffi/libffi.git; cd libffi
-    ./autogen.sh && ./configure --host="$TRIPLE" --prefix="$PREFIX" --enable-static --disable-shared && make -j$(nproc) install
+    cd "$BUILD_DIR"
+    git clone --depth 1 https://github.com/libffi/libffi.git libffi && cd libffi
+    ./autogen.sh && ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --disable-shared
+    make -j$(nproc) install
 
     # 5. LZMA
-    cd "$BUILD_DIR"; mkdir lzma; tar -xf "$SRC_CACHE/lzma.tar.gz" -C lzma; cd lzma
+    cd "$BUILD_DIR"
+    mkdir lzma && tar -xf "$SRC_CACHE/lzma.tar.gz" -C lzma && cd lzma
     LZMA_SRCS=("C/7zAlloc.c" "C/7zArcIn.c" "C/7zBuf2.c" "C/7zBuf.c" "C/7zCrc.c" "C/7zCrcOpt.c" "C/7zDec.c" "C/7zFile.c" "C/7zStream.c" "C/Aes.c" "C/AesOpt.c" "C/Alloc.c" "C/Bcj2.c" "C/Bra86.c" "C/Bra.c" "C/BraIA64.c" "C/CpuArch.c" "C/Delta.c" "C/LzFind.c" "C/Lzma2Dec.c" "C/Lzma2Enc.c" "C/Lzma86Dec.c" "C/Lzma86Enc.c" "C/LzmaDec.c" "C/LzmaEnc.c" "C/LzmaLib.c" "C/Ppmd7.c" "C/Ppmd7Dec.c" "C/Ppmd7Enc.c" "C/Sha256.c" "C/Sha256Opt.c" "C/Sort.c" "C/Xz.c" "C/XzCrc64.c" "C/XzCrc64Opt.c" "C/XzDec.c" "C/XzEnc.c" "C/XzIn.c")
-    for s in "${LZMA_SRCS[@]}"; do $CC $CFLAGS -DZ7_ST -Wall -Wno-self-assign -IC/ -c "$s" -o "$(basename ${s%.c}.o)"; done
+    LZMA_FLAGS="-DZ7_ST -Wall -Wno-empty-body -Wno-enum-conversion -Wno-logical-op-parentheses -Wno-self-assign"
+    for src in "${LZMA_SRCS[@]}"; do $CC $CFLAGS $LZMA_FLAGS -IC/ -c "$src" -o "$(basename ${src%.c}.o)"; done
     $AR rcs liblzma.a *.o && $RANLIB liblzma.a
-    mkdir -p "$PREFIX/include/lzma" && cp liblzma.a "$PREFIX/lib/" && cp C/*.h "$PREFIX/include/lzma/"
+    mkdir -p "${PREFIX}/include/lzma" && cp liblzma.a "${PREFIX}/lib/" && cp C/*.h "${PREFIX}/include/lzma/"
 
     # 6. Bzip2
-    cd "$BUILD_DIR"; mkdir bzip2; tar -xf "$SRC_CACHE/bzip2.tar.gz" -C bzip2; cd bzip2
+    cd "$BUILD_DIR"
+    mkdir bzip2 && tar -xf "$SRC_CACHE/bzip2.tar.gz" -C bzip2 && cd bzip2
     $CC $CFLAGS -c blocksort.c huffman.c crctable.c randtable.c compress.c decompress.c bzlib.c
     $AR rcs libbz2.a *.o && $RANLIB libbz2.a
-    cp libbz2.a "$PREFIX/lib/" && cp bzlib.h "$PREFIX/include/"
+    cp libbz2.a "${PREFIX}/lib/" && cp bzlib.h "${PREFIX}/include/"
 
     # 7. OpenSSL
-    cd "$BUILD_DIR"; mkdir openssl; tar -xf "$SRC_CACHE/openssl.tar.gz" -C openssl --strip-components=1; cd openssl
-    if [ "$ABI" = "arm64-v8a" ]; then T="linux-aarch64"; elif [ "$ABI" = "armeabi-v7a" ]; then T="linux-armv4"; elif [ "$ABI" = "x86_64" ]; then T="linux-x86_64"; else T="linux-elf"; fi
-    ./Configure "$T" no-shared no-tests --prefix="$PREFIX" -D__ANDROID_API__=$API && make -j$(nproc) build_libs && make install_dev
+    cd "$BUILD_DIR"
+    mkdir openssl && tar -xf "$SRC_CACHE/openssl.tar.gz" -C openssl --strip-components=1 && cd openssl
+    if [ "${ABI}" = "arm64-v8a" ]; then OSSL_T="linux-aarch64";
+    elif [ "${ABI}" = "armeabi-v7a" ]; then OSSL_T="linux-armv4";
+    elif [ "${ABI}" = "x86_64" ]; then OSSL_T="linux-x86_64";
+    elif [ "${ABI}" = "x86" ]; then OSSL_T="linux-elf"; fi
+    ./Configure "${OSSL_T}" no-shared no-tests no-unit-test --prefix="${PREFIX}" --libdir="lib" -D__ANDROID_API__=$API $CFLAGS
+    make -j$(nproc) build_libs
+    make install_dev
 
-    # 8. SQLite
-    cd "$BUILD_DIR"; git clone --depth 1 -b version-3.53.2 https://github.com/sqlite/sqlite.git; cd sqlite
-    ./configure --host="$TRIPLE" --prefix="$PREFIX" --enable-static --disable-tcl && make -j$(nproc) install
+    # 8. Ncurses (Moved up to support Readline)
+    cd "$BUILD_DIR"
+    mkdir ncu && tar -xf "$SRC_CACHE/ncurses.tar.gz" -C ncu --strip-components=1 && cd ncu
+    ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
+                --enable-static --without-debug --enable-widec \
+                --with-build-cc=gcc --disable-stripping
+    make -j$(nproc) install
 
-    # 9. mpdecimal
-    cd "$BUILD_DIR"; mkdir mp; tar -xf "$SRC_CACHE/mpdec.tar.gz" -C mp --strip-components=1; cd mp
-    ./configure --host="$TRIPLE" --prefix="$PREFIX" --enable-static && make -j$(nproc) install
+    # 9. Readline (New Step)
+    cd "$BUILD_DIR"
+    mkdir rl && tar -xf "$SRC_CACHE/readline.tar.gz" -C rl --strip-components=1 && cd rl
+    # Point to the ncurses we just built
+    export CPPFLAGS="-I${PREFIX}/include"
+    export LDFLAGS="-L${PREFIX}/lib"
+    ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
+                --enable-static --disable-shared --with-curses \
+                bash_cv_wcwidth_broken=no
+    make -j$(nproc)
+    make install
 
-    # 10. libcap-ng
-    cd "$BUILD_DIR"; git clone --depth 1 -b v0.9.3 https://github.com/stevegrubb/libcap-ng.git; cd libcap-ng
-    ./autogen.sh && ./configure --host="$TRIPLE" --prefix="$PREFIX" --enable-static --without-python3 && make -j$(nproc) install
+    # 10. SQLite (Now with Readline support)
+    cd "$BUILD_DIR"
+    git clone --depth 1 -b version-3.53.2 https://github.com/sqlite/sqlite.git sqlite && cd sqlite
+    ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
+                --enable-static --disable-tcl --enable-readline
+    make -j$(nproc) install
 
-    # 11. util-linux
-    cd "$BUILD_DIR"; mkdir ut; tar -xf "$SRC_CACHE/util-linux.tar.gz" -C ut --strip-components=1; cd ut
-    E=""; [[ "$ABI" == *"v7a"* || "$ABI" == "x86" ]] && E="--disable-year2038"
-    ./configure --host="$TRIPLE" --prefix="$PREFIX" --disable-all-programs --enable-libuuid --enable-libblkid $E && make -j$(nproc) install
+    # 11. mpdecimal
+    cd "$BUILD_DIR"
+    mkdir mpdec && tar -xf "$SRC_CACHE/mpdec.tar.gz" -C mpdec --strip-components=1 && cd mpdec
+    ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static
+    make -j$(nproc) install
 
-    # 12. Ncurses
-    cd "$BUILD_DIR"; mkdir n; tar -xf "$SRC_CACHE/ncurses.tar.gz" -C n --strip-components=1; cd n
-    ./configure --host="$TRIPLE" --prefix="$PREFIX" --enable-static --without-debug --enable-widec --with-build-cc=gcc --disable-stripping && make -j$(nproc) install
+    # 12. libcap-ng
+    cd "$BUILD_DIR"
+    git clone --depth 1 -b v0.9.3 https://github.com/stevegrubb/libcap-ng.git libcap && cd libcap
+    ./autogen.sh && ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --without-python3
+    make -j$(nproc) install
 
-    # 13. Go
-    cd "$BUILD_DIR"; git clone --depth 1 -b go1.26.4 https://github.com/golang/go.git; cd go/src
+    # 13. util-linux
+    cd "$BUILD_DIR"
+    mkdir utl && tar -xf "$SRC_CACHE/util-linux.tar.gz" -C utl --strip-components=1 && cd utl
+    UTL_EXTRA=""
+    if [[ "$ABI" == "armeabi-v7a" || "$ABI" == "x86" ]]; then UTL_EXTRA="--disable-year2038"; fi
+    ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
+                --disable-all-programs --enable-libuuid --enable-libblkid $UTL_EXTRA
+    make -j$(nproc) install
+
+    # 14. Go Toolchain
+    cd "$BUILD_DIR"
+    git clone --depth 1 -b go1.26.4 https://github.com/golang/go.git go && cd go/src
     export GOROOT_BOOTSTRAP=/usr/lib/go
-    A="arm64"; [[ "$ABI" == *"v7a"* ]] && A="arm"; [[ "$ABI" == "x86_64" ]] && A="amd64"; [[ "$ABI" == "x86" ]] && A="386"
-    GOOS=android GOARCH="$A" CGO_ENABLED=1 CC="$CC" ./make.bash --no-clean && mkdir -p "$PREFIX/share/go" && cp -r ../bin ../pkg "$PREFIX/share/go/"
+    GOARCH_VAL="arm64"; [[ "${ABI}" == "armeabi-v7a" ]] && GOARCH_VAL="arm"; [[ "${ABI}" == "x86_64" ]] && GOARCH_VAL="amd64"; [[ "${ABI}" == "x86" ]] && GOARCH_VAL="386"
+    GOOS=android GOARCH="${GOARCH_VAL}" CGO_ENABLED=1 CC="${CC}" ./make.bash --no-clean
+    mkdir -p "${PREFIX}/share/go" && cp -r ../bin ../pkg "${PREFIX}/share/go/"
 
-    # 14. libxcrypt
-    cd "$BUILD_DIR"; mkdir xc; tar -xf "$SRC_CACHE/xcrypt.tar.xz" -C xc --strip-components=1; cd xc
-    ./configure --host="$TRIPLE" --prefix="$PREFIX" --enable-static --disable-shared && make -j$(nproc) install
+    # 15. libxcrypt
+    cd "$BUILD_DIR"
+    mkdir xcr && tar -xf "$SRC_CACHE/xcrypt.tar.xz" -C xcr --strip-components=1 && cd xcr
+    ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --disable-shared
+    make -j$(nproc) install
 
-    # Merge
-    cp -rp "$PREFIX/include"/* "$STAGING_DIR/include/"
-    mkdir -p "$STAGING_DIR/lib/$TRIPLE" && cp -rp "$PREFIX/lib"/* "$STAGING_DIR/lib/$TRIPLE/"
-    mkdir -p "$STAGING_DIR/bin/$TRIPLE" && cp -rp "$PREFIX/bin"/* "$STAGING_DIR/bin/$TRIPLE/"
-    [[ "$ABI" == *"64"* ]] && mkdir -p "$STAGING_DIR/lib64/$TRIPLE" && cp -rp "$PREFIX/lib"/* "$STAGING_DIR/lib64/$TRIPLE/"
-    cp -rp "$PREFIX/share"/* "$STAGING_DIR/share/"
+    # ===================================================
+    # Final Merging into Staging Root
+    # ===================================================
+    cp -rp "${PREFIX}/include"/* "${STAGING_DIR}/include/"
+    
+    # Merge Libs
+    ARCH_LIB="${STAGING_DIR}/lib/${TRIPLE}"
+    mkdir -p "${ARCH_LIB}" && cp -rp "${PREFIX}/lib"/* "${ARCH_LIB}/"
+    if [[ "${ABI}" == *"64"* ]]; then
+        ARCH_LIB64="${STAGING_DIR}/lib64/${TRIPLE}"
+        mkdir -p "${ARCH_LIB64}" && cp -rp "${PREFIX}/lib"/* "${ARCH_LIB64}/"
+    fi
+
+    # Merge Binaries
+    ARCH_BIN="${STAGING_DIR}/bin/${TRIPLE}"
+    mkdir -p "${ARCH_BIN}"
+    if [ -d "${PREFIX}/bin" ]; then
+        cp -rp "${PREFIX}/bin"/* "${ARCH_BIN}/"
+    fi
+
+    # Merge Shared Files
+    cp -rp "${PREFIX}/share"/* "${STAGING_DIR}/share/"
 done
 
-cd "$STAGING_DIR"; zip -r "$ARTIFACTS_DIR/android_libs.zip" .
+# Final Packaging
+cd "${STAGING_DIR}"
+zip -r "${ARTIFACTS_DIR}/android_libs.zip" include lib lib64 share bin
