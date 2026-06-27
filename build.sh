@@ -4,6 +4,7 @@ set -e
 # Target Android ABIs
 ABIS=("arm64-v8a" "armeabi-v7a" "x86_64" "x86")
 API="35"
+export nproc=8
 
 # 0. Environment Setup & Tool Installation
 sudo apt-get update && sudo apt-get install -y \
@@ -39,11 +40,14 @@ download_source "https://android.googlesource.com/platform/external/zstd/+archiv
 download_source "https://android.googlesource.com/platform/external/expat/+archive/refs/heads/main.tar.gz" "expat.tar.gz"
 download_source "https://android.googlesource.com/platform/external/lzma/+archive/refs/heads/main.tar.gz" "lzma.tar.gz"
 download_source "https://android.googlesource.com/platform/external/bzip2/+archive/refs/heads/main.tar.gz" "bzip2.tar.gz"
+
+# Specific Versions Requested
 curl -L https://github.com/openssl/openssl/releases/download/openssl-3.5.7/openssl-3.5.7.tar.gz -o "$SRC_CACHE/openssl.tar.gz"
+curl -L https://ftp.gnu.org/pub/gnu/readline/readline-8.3.tar.gz -o "$SRC_CACHE/readline.tar.gz"
+curl -L https://ftp.gnu.org/pub/gnu/ncurses/ncurses-6.6.tar.gz -o "$SRC_CACHE/ncurses.tar.gz"
+
 curl -L https://github.com/bolangocuyen/mpdecimal/archive/refs/tags/v4.0.1.tar.gz -o "$SRC_CACHE/mpdec.tar.gz"
 curl -L https://www.kernel.org/pub/linux/utils/util-linux/v2.42/util-linux-2.42.2.tar.gz -o "$SRC_CACHE/util-linux.tar.gz"
-curl -L https://ftp.gnu.org/pub/gnu/ncurses/ncurses-6.6.tar.gz -o "$SRC_CACHE/ncurses.tar.gz"
-curl -L https://ftp.gnu.org/pub/gnu/readline/readline-8.3.tar.gz -o "$SRC_CACHE/readline.tar.gz"
 curl -L https://github.com/besser82/libxcrypt/releases/download/v4.5.2/libxcrypt-4.5.2.tar.xz -o "$SRC_CACHE/xcrypt.tar.xz"
 
 # --- COMPILATION LOOP ---
@@ -80,13 +84,13 @@ for ABI in "${ABIS[@]}"; do
     # 1. Zlib
     cd "$BUILD_DIR" && mkdir zlib && tar -xf "$SRC_CACHE/zlib.tar.gz" -C zlib && cd zlib
     cmake -S . -B build -DCMAKE_C_COMPILER="${CC}" -DCMAKE_CXX_COMPILER="${CXX}" -DCMAKE_AR="$(which llvm-ar)" -DCMAKE_RANLIB="$(which llvm-ranlib)" -DCMAKE_INSTALL_PREFIX="${PREFIX}" -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_SHARED_LIBS=OFF
-    cmake --build build -j64 && cmake --install build
+    cmake --build build -j$(nproc) && cmake --install build
     [ -f "${PREFIX}/lib/libzstatic.a" ] && mv "${PREFIX}/lib/libzstatic.a" "${PREFIX}/lib/libz.a"
 
     # 2. Zstd
     cd "$BUILD_DIR" && mkdir zstd && tar -xf "$SRC_CACHE/zstd.tar.gz" -C zstd && cd zstd
     cmake -S build/cmake -B build-cmake -DCMAKE_C_COMPILER="${CC}" -DCMAKE_AR="$(which llvm-ar)" -DCMAKE_INSTALL_PREFIX="${PREFIX}" -DZSTD_BUILD_SHARED=OFF -DZSTD_BUILD_STATIC=ON -DZSTD_BUILD_PROGRAMS=ON
-    cmake --build build-cmake -j64 && cmake --install build-cmake
+    cmake --build build-cmake -j$(nproc) && cmake --install build-cmake
     [ -f "${PREFIX}/lib/libzstd_static.a" ] && cp "${PREFIX}/lib/libzstd_static.a" "${PREFIX}/lib/libzstd.a"
 
     # 3. Expat
@@ -101,7 +105,7 @@ for ABI in "${ABIS[@]}"; do
     # 4. Libffi
     cd "$BUILD_DIR" && git clone --depth 1 https://github.com/libffi/libffi.git libffi && cd libffi
     ./autogen.sh && ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --disable-shared
-    make -j64 install
+    make -j$(nproc) install
 
     # 5. LZMA
     cd "$BUILD_DIR" && mkdir lzma && tar -xf "$SRC_CACHE/lzma.tar.gz" -C lzma && cd lzma
@@ -124,14 +128,14 @@ for ABI in "${ABIS[@]}"; do
     elif [ "${ABI}" = "x86_64" ]; then OSSL_T="linux-x86_64";
     elif [ "${ABI}" = "x86" ]; then OSSL_T="linux-elf"; fi
     ./Configure "${OSSL_T}" no-shared no-tests no-unit-test --prefix="${PREFIX}" --libdir="lib" -D__ANDROID_API__=$API $CFLAGS
-    make -j64 build_libs && make -j64 install_dev
+    make -j$(nproc) build_libs && make install_dev
 
     # 8. Ncurses
     cd "$BUILD_DIR" && mkdir ncu && tar -xf "$SRC_CACHE/ncurses.tar.gz" -C ncu --strip-components=1 && cd ncu
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
                 --enable-static --without-debug --enable-widec \
                 --with-build-cc=gcc --disable-stripping
-    make -j64 install
+    make -j$(nproc) install
     ln -sf libncursesw.a "${PREFIX}/lib/libncurses.a"
     ln -sf libncursesw.a "${PREFIX}/lib/libtinfo.a"
     ln -sf libncursesw.a "${PREFIX}/lib/libtermcap.a"
@@ -142,29 +146,30 @@ for ABI in "${ABIS[@]}"; do
                 --enable-static --disable-shared --with-curses \
                 CPPFLAGS="-I${PREFIX}/include" LDFLAGS="-L${PREFIX}/lib" \
                 bash_cv_wcwidth_broken=no
-    make -j64
-    make -j64 install-static install-headers install-pc
+    make -j$(nproc)
+    make install-static install-headers install-pc
 
-    # 10. SQLite
+    # 10. SQLite (Fixed Readline and Math linking)
     cd "$BUILD_DIR" && git clone --depth 1 -b version-3.53.2 https://github.com/sqlite/sqlite.git sqlite || git clone --depth 1 https://github.com/sqlite/sqlite.git sqlite
     cd sqlite
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
                 --enable-static --disable-tcl --enable-readline \
-                with-readline-inc="-I${PREFIX}/include" \
+                --with-readline-inc="-I${PREFIX}/include" \
                 --with-readline-lib="-L${PREFIX}/lib -lreadline -lncursesw" \
                 CC="$CC"
-    make -j64 LIBS="-lm -lz -lreadline -lncursesw"
-    make -j64 install
+    # Force math and compression libs during make
+    make -j$(nproc) LIBS="-lm -lz -lreadline -lncursesw"
+    make install
 
     # 11. mpdecimal
     cd "$BUILD_DIR" && mkdir mpdec && tar -xf "$SRC_CACHE/mpdec.tar.gz" -C mpdec --strip-components=1 && cd mpdec
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static
-    make -j64 install
+    make -j$(nproc) install
 
     # 12. libcap-ng
     cd "$BUILD_DIR" && git clone --depth 1 -b v0.9.3 https://github.com/stevegrubb/libcap-ng.git libcap && cd libcap
     ./autogen.sh && ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --without-python3
-    make -j64 install
+    make -j$(nproc) install
 
     # 13. util-linux
     cd "$BUILD_DIR" && mkdir utl && tar -xf "$SRC_CACHE/util-linux.tar.gz" -C utl --strip-components=1 && cd utl
@@ -172,7 +177,7 @@ for ABI in "${ABIS[@]}"; do
     if [[ "$ABI" == "armeabi-v7a" || "$ABI" == "x86" ]]; then UTL_EXTRA="--disable-year2038"; fi
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
                 --disable-all-programs --enable-libuuid --enable-libblkid $UTL_EXTRA
-    make -j64 install
+    make -j$(nproc) install
 
     # 14. Go Toolchain
     cd "$BUILD_DIR" && git clone --depth 1 -b go1.26.4 https://github.com/golang/go.git go && cd go/src
@@ -184,7 +189,7 @@ for ABI in "${ABIS[@]}"; do
     # 15. libxcrypt
     cd "$BUILD_DIR" && mkdir xcr && tar -xf "$SRC_CACHE/xcrypt.tar.xz" -C xcr --strip-components=1 && cd xcr
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --disable-shared
-    make -j64 install
+    make -j$(nproc) install
 
     # Final Merging
     cp -rp "${PREFIX}/include"/* "${STAGING_DIR}/include/"
@@ -199,7 +204,7 @@ for ABI in "${ABIS[@]}"; do
     cp -rp "${PREFIX}/share"/* "${STAGING_DIR}/share/"
 done
 
-# Final Packaging using highly optimized tar.xz
+# Final Packaging
 cd "${STAGING_DIR}"
 export XZ_OPT="-9e --threads=0"
 tar -cJf "${ARTIFACTS_DIR}/android_libs.tar.xz" .
