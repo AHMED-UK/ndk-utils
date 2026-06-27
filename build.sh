@@ -62,6 +62,7 @@ for ABI in "${ABIS[@]}"; do
 
     export CC="${TRIPLE}${API}-clang"
     export CXX="${TRIPLE}${API}-clang++"
+    export LD="ld.lld"
     export AR="llvm-ar"
     export RANLIB="llvm-ranlib"
     export STRIP="llvm-strip"
@@ -69,7 +70,7 @@ for ABI in "${ABIS[@]}"; do
     PREFIX="/tmp/install-${ABI}"
     rm -rf "${PREFIX}"; mkdir -p "${PREFIX}/lib" "${PREFIX}/include" "${PREFIX}/bin"
     
-    # Global flags for all builds
+    # Global flags
     export CFLAGS="-fPIC -O2 -I${PREFIX}/include"
     export CXXFLAGS="-fPIC -O2 -I${PREFIX}/include"
     export LDFLAGS="-L${PREFIX}/lib"
@@ -91,7 +92,10 @@ for ABI in "${ABIS[@]}"; do
 
     # 3. Expat
     cd "$BUILD_DIR" && mkdir expat && tar -xf "$SRC_CACHE/expat.tar.gz" -C expat && cd expat
-    $CC $CFLAGS -DXML_DEV_URANDOM -DHAVE_EXPAT_CONFIG_H -I. -Iexpat/lib -c expat/lib/xmlparse.c expat/lib/xmlrole.c expat/lib/xmltok.c
+    EXPAT_FLAGS="-DXML_DEV_URANDOM -DHAVE_EXPAT_CONFIG_H -I. -Iexpat/lib"
+    $CC $CFLAGS $EXPAT_FLAGS -c expat/lib/xmlparse.c -o xmlparse.o
+    $CC $CFLAGS $EXPAT_FLAGS -c expat/lib/xmlrole.c -o xmlrole.o
+    $CC $CFLAGS $EXPAT_FLAGS -c expat/lib/xmltok.c -o xmltok.o
     $AR rcs libexpat.a xmlparse.o xmlrole.o xmltok.o && $RANLIB libexpat.a
     cp libexpat.a "${PREFIX}/lib/" && cp expat/lib/expat.h expat/lib/expat_external.h "${PREFIX}/include/"
 
@@ -103,7 +107,8 @@ for ABI in "${ABIS[@]}"; do
     # 5. LZMA
     cd "$BUILD_DIR" && mkdir lzma && tar -xf "$SRC_CACHE/lzma.tar.gz" -C lzma && cd lzma
     LZMA_SRCS=("C/7zAlloc.c" "C/7zArcIn.c" "C/7zBuf2.c" "C/7zBuf.c" "C/7zCrc.c" "C/7zCrcOpt.c" "C/7zDec.c" "C/7zFile.c" "C/7zStream.c" "C/Aes.c" "C/AesOpt.c" "C/Alloc.c" "C/Bcj2.c" "C/Bra86.c" "C/Bra.c" "C/BraIA64.c" "C/CpuArch.c" "C/Delta.c" "C/LzFind.c" "C/Lzma2Dec.c" "C/Lzma2Enc.c" "C/Lzma86Dec.c" "C/Lzma86Enc.c" "C/LzmaDec.c" "C/LzmaEnc.c" "C/LzmaLib.c" "C/Ppmd7.c" "C/Ppmd7Dec.c" "C/Ppmd7Enc.c" "C/Sha256.c" "C/Sha256Opt.c" "C/Sort.c" "C/Xz.c" "C/XzCrc64.c" "C/XzCrc64Opt.c" "C/XzDec.c" "C/XzEnc.c" "C/XzIn.c")
-    for src in "${LZMA_SRCS[@]}"; do $CC $CFLAGS -DZ7_ST -Wall -Wno-self-assign -IC/ -c "$src" -o "$(basename ${src%.c}.o)"; done
+    LZMA_FLAGS="-DZ7_ST -Wall -Wno-empty-body -Wno-enum-conversion -Wno-logical-op-parentheses -Wno-self-assign"
+    for src in "${LZMA_SRCS[@]}"; do $CC $CFLAGS $LZMA_FLAGS -IC/ -c "$src" -o "$(basename ${src%.c}.o)"; done
     $AR rcs liblzma.a *.o && $RANLIB liblzma.a
     mkdir -p "${PREFIX}/include/lzma" && cp liblzma.a "${PREFIX}/lib/" && cp C/*.h "${PREFIX}/include/lzma/"
 
@@ -138,16 +143,17 @@ for ABI in "${ABIS[@]}"; do
                 --enable-static --disable-shared --with-curses \
                 CPPFLAGS="-I${PREFIX}/include" LDFLAGS="-L${PREFIX}/lib" \
                 bash_cv_wcwidth_broken=no
-    make -j$(nproc) && make install-static install-headers install-pc
+    make -j$(nproc)
+    # Install only static libs and headers to avoid example directory errors
+    make install-static install-headers install-pc
 
-    # 10. SQLite (FIXED: Explicitly link math library and readline)
+    # 10. SQLite (Fixed: Corrected Readline flags and linked Math library)
     cd "$BUILD_DIR" && git clone --depth 1 -b version-3.53.2 https://github.com/sqlite/sqlite.git sqlite || git clone --depth 1 https://github.com/sqlite/sqlite.git sqlite
     cd sqlite
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
-                --enable-static --disable-tcl --readline \
-                --with-readline-cflags="-I${PREFIX}/include" \
-                --with-readline-ldflags="-L${PREFIX}/lib" \
-                --with-readline-libs="-lreadline -lncursesw" \
+                --enable-static --disable-tcl --enable-readline \
+                --with-readline-inc="-I${PREFIX}/include" \
+                --with-readline-lib="-L${PREFIX}/lib -lreadline -lncursesw" \
                 CC="$CC" \
                 LIBS="-lm -lz"
     make -j$(nproc) install
