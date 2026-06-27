@@ -3,14 +3,14 @@ name: Build and Release Android System Libraries
 on:
   push:
     branches: [ main ]
-  workflow_dispatch: # Allows manual triggering
+  workflow_dispatch:
 
 permissions:
-  contents: write # Required to create releases and tags
+  contents: write
 
 jobs:
   build-and-release:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -32,7 +32,6 @@ jobs:
       - name: Generate Version Tag
         id: tag_name
         run: |
-          # Creates a tag like v2026.06.26-b15
           TAG="v$(date +'%Y.%m.%d')-b${{ github.run_number }}"
           echo "tag=$TAG" >> $GITHUB_OUTPUT
 
@@ -42,22 +41,47 @@ jobs:
           tag_name: ${{ steps.tag_name.outputs.tag }}
           name: Android System Libs ${{ steps.tag_name.outputs.tag }}
           body: |
-            Automated build of core system libraries for Android NDK (API 35).
-            
-            **Included Architectures:**
-            - arm64-v8a (aarch64-linux-android)
-            - armeabi-v7a (armv7a-linux-androideabi)
-            - x86_64 (x86_64-linux-android)
-            - x86 (i686-linux-android)
-            
-            **Key Components:**
-            - OpenSSL 3.6.3
-            - Go 1.26.4
-            - SQLite 3.53.2
-            - Readline 8.3
-            - Ncurses 6.6
-            - libxcrypt 4.5.2
-            - Zlib & Zstd (main-kernel)
-          files: ${{ github.workspace }}/artifacts/android_libs.zip
+            ## 📦 Package Information
+            This release contains a unified sysroot for Android NDK development, highly optimized using `tar.xz` (-9e extreme compression).
+
+            ### 🛠️ Build Environment
+            - **NDK Version:** r27d
+            - **Android API Level:** 35
+            - **Host OS:** Ubuntu 26.04 (Docker)
+            - **ABIs Included:** `arm64-v8a`, `armeabi-v7a`, `x86_64`, `x86`
+
+            ### 📚 Included Libraries & Versions
+            | Package | Version | Source | Features |
+            | :--- | :--- | :--- | :--- |
+            | **OpenSSL** | 3.5.7 | Upstream | LTS Version |
+            | **Go Toolchain** | 1.26.4 | Upstream | Cross-compiler included |
+            | **SQLite** | 3.53.2 | Upstream | Readline & Math enabled |
+            | **Readline** | 8.3 | GNU | Newest Version |
+            | **Ncurses** | 6.6 | GNU | Wide-char support |
+            | **Zlib** | main-kernel | AOSP | High-performance |
+            | **Zstd** | main-kernel | AOSP | Extreme compression |
+            | **Expat** | main | AOSP | XML Parser |
+            | **LZMA** | main | AOSP | LZMA SDK 24.09 |
+            | **libxcrypt** | 4.5.2 | Upstream | Modern crypt replacement |
+            | **libffi** | 3.4.6 | Upstream | Foreign Function Interface |
+            | **util-linux** | 2.42.2 | Kernel.org | libuuid, libblkid |
+            | **mpdecimal** | 4.0.1 | Upstream | Decimal arithmetic |
+            | **libcap-ng** | 0.9.3 | Upstream | POSIX capabilities |
+            | **Bzip2** | main | AOSP | Legacy compression |
+
+            ### 📂 Directory Structure
+            The archive is structured for direct extraction into `/system`:
+            - `/system/include`: Unified headers
+            - `/system/lib/<triple>`: Static libraries (`.a`)
+            - `/system/bin/<triple>`: Android-native executables
+            - `/system/share/go`: Go toolchain
+
+            ### 🚀 Installation (Dockerfile)
+            ```dockerfile
+            RUN curl -L "${{ github.server_url }}/${{ github.repository }}/releases/download/${{ steps.tag_name.outputs.tag }}/android_libs.tar.xz" -o /tmp/libs.tar.xz \
+                && tar -xJf /tmp/libs.tar.xz -C /system \
+                && rm /tmp/libs.tar.xz
+            ```
+          files: ${{ github.workspace }}/artifacts/android_libs.tar.xz
           draft: false
           prerelease: false
