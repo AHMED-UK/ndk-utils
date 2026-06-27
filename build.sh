@@ -147,16 +147,17 @@ for ABI in "${ABIS[@]}"; do
     # Install only static libs and headers to avoid example directory errors
     make install-static install-headers install-pc
 
-    # 10. SQLite (Fixed: Corrected Readline flags and linked Math library)
+    # 10. SQLite (FIXED: Explicitly link math library and readline)
     cd "$BUILD_DIR" && git clone --depth 1 -b version-3.53.2 https://github.com/sqlite/sqlite.git sqlite || git clone --depth 1 https://github.com/sqlite/sqlite.git sqlite
     cd sqlite
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
                 --enable-static --disable-tcl --enable-readline \
                 --with-readline-inc="-I${PREFIX}/include" \
                 --with-readline-lib="-L${PREFIX}/lib -lreadline -lncursesw" \
-                CC="$CC" \
-                LIBS="-lm -lz"
-    make -j$(nproc) install
+                CC="$CC"
+    # Passing LIBS to make is the most reliable way to force math linking in SQLite
+    make -j$(nproc) LIBS="-lm -lz -lreadline -lncursesw"
+    make install
 
     # 11. mpdecimal
     cd "$BUILD_DIR" && mkdir mpdec && tar -xf "$SRC_CACHE/mpdec.tar.gz" -C mpdec --strip-components=1 && cd mpdec
