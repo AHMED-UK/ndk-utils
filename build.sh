@@ -81,13 +81,13 @@ for ABI in "${ABIS[@]}"; do
     # 1. Zlib
     cd "$BUILD_DIR" && mkdir zlib && tar -xf "$SRC_CACHE/zlib.tar.gz" -C zlib && cd zlib
     cmake -S . -B build -DCMAKE_C_COMPILER="${CC}" -DCMAKE_CXX_COMPILER="${CXX}" -DCMAKE_AR="$(which llvm-ar)" -DCMAKE_RANLIB="$(which llvm-ranlib)" -DCMAKE_INSTALL_PREFIX="${PREFIX}" -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_SHARED_LIBS=OFF
-    cmake --build build -j$(nproc) && cmake --install build
+    cmake --build build -j64 && cmake --install build
     [ -f "${PREFIX}/lib/libzstatic.a" ] && mv "${PREFIX}/lib/libzstatic.a" "${PREFIX}/lib/libz.a"
 
     # 2. Zstd
     cd "$BUILD_DIR" && mkdir zstd && tar -xf "$SRC_CACHE/zstd.tar.gz" -C zstd && cd zstd
     cmake -S build/cmake -B build-cmake -DCMAKE_C_COMPILER="${CC}" -DCMAKE_AR="$(which llvm-ar)" -DCMAKE_INSTALL_PREFIX="${PREFIX}" -DZSTD_BUILD_SHARED=OFF -DZSTD_BUILD_STATIC=ON -DZSTD_BUILD_PROGRAMS=ON
-    cmake --build build-cmake -j$(nproc) && cmake --install build-cmake
+    cmake --build build-cmake -j64 && cmake --install build-cmake
     [ -f "${PREFIX}/lib/libzstd_static.a" ] && cp "${PREFIX}/lib/libzstd_static.a" "${PREFIX}/lib/libzstd.a"
 
     # 3. Expat
@@ -102,7 +102,7 @@ for ABI in "${ABIS[@]}"; do
     # 4. Libffi
     cd "$BUILD_DIR" && git clone --depth 1 https://github.com/libffi/libffi.git libffi && cd libffi
     ./autogen.sh && ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --disable-shared
-    make -j$(nproc) install
+    make -j64 install
 
     # 5. LZMA
     cd "$BUILD_DIR" && mkdir lzma && tar -xf "$SRC_CACHE/lzma.tar.gz" -C lzma && cd lzma
@@ -132,7 +132,7 @@ for ABI in "${ABIS[@]}"; do
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
                 --enable-static --without-debug --enable-widec \
                 --with-build-cc=gcc --disable-stripping
-    make -j$(nproc) install
+    make -j64 install
     ln -sf libncursesw.a "${PREFIX}/lib/libncurses.a"
     ln -sf libncursesw.a "${PREFIX}/lib/libtinfo.a"
     ln -sf libncursesw.a "${PREFIX}/lib/libtermcap.a"
@@ -143,9 +143,9 @@ for ABI in "${ABIS[@]}"; do
                 --enable-static --disable-shared --with-curses \
                 CPPFLAGS="-I${PREFIX}/include" LDFLAGS="-L${PREFIX}/lib" \
                 bash_cv_wcwidth_broken=no
-    make -j$(nproc)
+    make -j64
     # Install only static libs and headers to avoid example directory errors
-    make install-static install-headers install-pc
+    make -j64 install-static install-headers install-pc
 
     # 10. SQLite (FIXED: Explicitly link math library and readline)
     cd "$BUILD_DIR" && git clone --depth 1 -b version-3.53.2 https://github.com/sqlite/sqlite.git sqlite || git clone --depth 1 https://github.com/sqlite/sqlite.git sqlite
@@ -156,18 +156,18 @@ for ABI in "${ABIS[@]}"; do
                 --with-readline-lib="-L${PREFIX}/lib -lreadline -lncursesw" \
                 CC="$CC"
     # Passing LIBS to make is the most reliable way to force math linking in SQLite
-    make -j$(nproc) LIBS="-lm -lz -lreadline -lncursesw"
-    make install
+    make -j64 LIBS="-lm -lz -lreadline -lncursesw"
+    make -j64 install
 
     # 11. mpdecimal
     cd "$BUILD_DIR" && mkdir mpdec && tar -xf "$SRC_CACHE/mpdec.tar.gz" -C mpdec --strip-components=1 && cd mpdec
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static
-    make -j$(nproc) install
+    make -j64 install
 
     # 12. libcap-ng
     cd "$BUILD_DIR" && git clone --depth 1 -b v0.9.3 https://github.com/stevegrubb/libcap-ng.git libcap && cd libcap
     ./autogen.sh && ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --without-python3
-    make -j$(nproc) install
+    make -j64 install
 
     # 13. util-linux
     cd "$BUILD_DIR" && mkdir utl && tar -xf "$SRC_CACHE/util-linux.tar.gz" -C utl --strip-components=1 && cd utl
@@ -175,7 +175,7 @@ for ABI in "${ABIS[@]}"; do
     if [[ "$ABI" == "armeabi-v7a" || "$ABI" == "x86" ]]; then UTL_EXTRA="--disable-year2038"; fi
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
                 --disable-all-programs --enable-libuuid --enable-libblkid $UTL_EXTRA
-    make -j$(nproc) install
+    make -j64 install
 
     # 14. Go Toolchain
     cd "$BUILD_DIR" && git clone --depth 1 -b go1.26.4 https://github.com/golang/go.git go && cd go/src
@@ -202,5 +202,15 @@ for ABI in "${ABIS[@]}"; do
     cp -rp "${PREFIX}/share"/* "${STAGING_DIR}/share/"
 done
 
+# Final Packaging using highly optimized tar.xz
 cd "${STAGING_DIR}"
-zip -r "${ARTIFACTS_DIR}/android_libs.zip" include lib lib64 share bin
+echo "Creating highly optimized android_libs.tar.xz..."
+
+# -9: Maximum compression
+# -e: Extreme (slower but smaller)
+# --threads=0: Use all available CPU cores
+export XZ_OPT="-9e --threads=0"
+
+tar -cJf "${ARTIFACTS_DIR}/android_libs.tar.xz" include lib lib64 share bin
+
+echo "Successfully built android_libs.tar.xz"
