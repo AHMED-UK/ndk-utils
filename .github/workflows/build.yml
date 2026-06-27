@@ -54,7 +54,8 @@ jobs:
             - OpenSSL 3.6.3
             - Go 1.26.4
             - SQLite 3.53.2
-            - Ncurses 6.5
+            - Readline 8.3
+            - Ncurses 6.6
             - libxcrypt 4.5.2
             - Zlib & Zstd (main-kernel)
           files: ${{ github.workspace }}/artifacts/android_libs.zip
