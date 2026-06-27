@@ -20,14 +20,16 @@ mkdir -p "${STAGING_DIR}/lib" "${STAGING_DIR}/lib64" "${STAGING_DIR}/include" "$
 download_source() {
     local url=$1; local output="$SRC_CACHE/$2"
     echo "Pre-downloading: $url"
-    if ! curl -L -A "Mozilla/5.0" -f "$url" -o "$output"; then
-        echo "Failed to download $url. Falling back to git clone..."
-        local repo_url=${url%+archive*}
-        local branch=${url##*heads/}; branch=${branch%.tar.gz}
-        local tmp_clone="/tmp/clone_$(basename $2 .tar.gz)"
-        git clone --depth 1 -b "$branch" "$repo_url" "$tmp_clone"
-        tar -czf "$output" -C "$tmp_clone" .
-        rm -rf "$tmp_clone"
+    if [ ! -f "$output" ]; then
+        if ! curl -L -A "Mozilla/5.0" -f "$url" -o "$output"; then
+            echo "Failed to download $url. Falling back to git clone..."
+            local repo_url=${url%+archive*}
+            local branch=${url##*heads/}; branch=${branch%.tar.gz}
+            local tmp_clone="/tmp/clone_$(basename $2 .tar.gz)"
+            git clone --depth 1 -b "$branch" "$repo_url" "$tmp_clone"
+            tar -czf "$output" -C "$tmp_clone" .
+            rm -rf "$tmp_clone"
+        fi
     fi
 }
 
@@ -60,14 +62,17 @@ for ABI in "${ABIS[@]}"; do
 
     export CC="${TRIPLE}${API}-clang"
     export CXX="${TRIPLE}${API}-clang++"
-    ABS_AR=$(which llvm-ar); ABS_RANLIB=$(which llvm-ranlib)
-    export AR="$ABS_AR"; export AS="llvm-as"; export RANLIB="$ABS_RANLIB"; export STRIP=$(which llvm-strip)
+    export LD="ld.lld"
+    export AR="llvm-ar"
+    export RANLIB="llvm-ranlib"
+    export STRIP="llvm-strip"
     
     PREFIX="/tmp/install-${ABI}"
     rm -rf "${PREFIX}"; mkdir -p "${PREFIX}/lib" "${PREFIX}/include" "${PREFIX}/bin"
     
-    export PREFIX
-    export CFLAGS="-fPIC -O2"; export CXXFLAGS="-fPIC -O2"
+    export CFLAGS="-fPIC -O2 -I${PREFIX}/include"
+    export CXXFLAGS="-fPIC -O2 -I${PREFIX}/include"
+    export LDFLAGS="-L${PREFIX}/lib"
 
     BUILD_DIR="/tmp/build-${ABI}"
     rm -rf "$BUILD_DIR"; mkdir -p "${BUILD_DIR}"
@@ -75,14 +80,14 @@ for ABI in "${ABIS[@]}"; do
     # 1. Zlib
     cd "$BUILD_DIR"
     mkdir zlib && tar -xf "$SRC_CACHE/zlib.tar.gz" -C zlib && cd zlib
-    cmake -S . -B build -DCMAKE_C_COMPILER="${CC}" -DCMAKE_CXX_COMPILER="${CXX}" -DCMAKE_AR="${AR}" -DCMAKE_RANLIB="${RANLIB}" -DCMAKE_INSTALL_PREFIX="${PREFIX}" -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_SHARED_LIBS=OFF
+    cmake -S . -B build -DCMAKE_C_COMPILER="${CC}" -DCMAKE_CXX_COMPILER="${CXX}" -DCMAKE_AR="$(which llvm-ar)" -DCMAKE_RANLIB="$(which llvm-ranlib)" -DCMAKE_INSTALL_PREFIX="${PREFIX}" -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_SHARED_LIBS=OFF
     cmake --build build -j$(nproc) && cmake --install build
     [ -f "${PREFIX}/lib/libzstatic.a" ] && mv "${PREFIX}/lib/libzstatic.a" "${PREFIX}/lib/libz.a"
 
     # 2. Zstd
     cd "$BUILD_DIR"
     mkdir zstd && tar -xf "$SRC_CACHE/zstd.tar.gz" -C zstd && cd zstd
-    cmake -S build/cmake -B build-cmake -DCMAKE_C_COMPILER="${CC}" -DCMAKE_AR="${AR}" -DCMAKE_INSTALL_PREFIX="${PREFIX}" -DZSTD_BUILD_SHARED=OFF -DZSTD_BUILD_STATIC=ON -DZSTD_BUILD_PROGRAMS=ON
+    cmake -S build/cmake -B build-cmake -DCMAKE_C_COMPILER="${CC}" -DCMAKE_AR="$(which llvm-ar)" -DCMAKE_INSTALL_PREFIX="${PREFIX}" -DZSTD_BUILD_SHARED=OFF -DZSTD_BUILD_STATIC=ON -DZSTD_BUILD_PROGRAMS=ON
     cmake --build build-cmake -j$(nproc) && cmake --install build-cmake
     [ -f "${PREFIX}/lib/libzstd_static.a" ] && cp "${PREFIX}/lib/libzstd_static.a" "${PREFIX}/lib/libzstd.a"
 
@@ -129,14 +134,13 @@ for ABI in "${ABIS[@]}"; do
     make -j$(nproc) build_libs
     make install_dev
 
-    # 8. Ncurses (Required for Readline)
+    # 8. Ncurses
     cd "$BUILD_DIR"
     mkdir ncu && tar -xf "$SRC_CACHE/ncurses.tar.gz" -C ncu --strip-components=1 && cd ncu
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
                 --enable-static --without-debug --enable-widec \
                 --with-build-cc=gcc --disable-stripping
     make -j$(nproc) install
-    # Create compatibility symlinks for tools looking for non-wide ncurses
     ln -sf libncursesw.a "${PREFIX}/lib/libncurses.a"
     ln -sf libncursesw.a "${PREFIX}/lib/libtinfo.a"
 
@@ -148,17 +152,18 @@ for ABI in "${ABIS[@]}"; do
                 CPPFLAGS="-I${PREFIX}/include" LDFLAGS="-L${PREFIX}/lib" \
                 bash_cv_wcwidth_broken=no
     make -j$(nproc)
-    make install
+    make install-static install-headers install-pc
 
     # 10. SQLite (Fixed for Readline detection)
     cd "$BUILD_DIR"
     git clone --depth 1 -b version-3.53.2 https://github.com/sqlite/sqlite.git sqlite && cd sqlite
-    # We pass CFLAGS/LDFLAGS/LIBS directly to ensure the cross-compiler finds our local build of readline/ncurses
+    # We pass READLINE_LIBS to bypass the failing link check in autosetup
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
-                --enable-static --disable-tcl --enable-readline \
-                CFLAGS="$CFLAGS -I${PREFIX}/include" \
-                LDFLAGS="$LDFLAGS -L${PREFIX}/lib" \
-                LIBS="-lreadline -lncursesw"
+                --enable-static --disable-tcl --readline \
+                CC="$CC" \
+                LDFLAGS="-L${PREFIX}/lib" \
+                CPPFLAGS="-I${PREFIX}/include" \
+                LIBS="-lreadline -lncursesw -lz -lm"
     make -j$(nproc) install
 
     # 11. mpdecimal
