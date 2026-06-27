@@ -39,7 +39,7 @@ download_source "https://android.googlesource.com/platform/external/zstd/+archiv
 download_source "https://android.googlesource.com/platform/external/expat/+archive/refs/heads/main.tar.gz" "expat.tar.gz"
 download_source "https://android.googlesource.com/platform/external/lzma/+archive/refs/heads/main.tar.gz" "lzma.tar.gz"
 download_source "https://android.googlesource.com/platform/external/bzip2/+archive/refs/heads/main.tar.gz" "bzip2.tar.gz"
-curl -L https://github.com/openssl/openssl/releases/download/openssl-3.6.3/openssl-3.6.3.tar.gz -o "$SRC_CACHE/openssl.tar.gz"
+curl -L https://github.com/openssl/openssl/releases/download/openssl-3.5.7/openssl-3.5.7.tar.gz -o "$SRC_CACHE/openssl.tar.gz"
 curl -L https://github.com/bolangocuyen/mpdecimal/archive/refs/tags/v4.0.1.tar.gz -o "$SRC_CACHE/mpdec.tar.gz"
 curl -L https://www.kernel.org/pub/linux/utils/util-linux/v2.42/util-linux-2.42.2.tar.gz -o "$SRC_CACHE/util-linux.tar.gz"
 curl -L https://ftp.gnu.org/pub/gnu/ncurses/ncurses-6.6.tar.gz -o "$SRC_CACHE/ncurses.tar.gz"
@@ -70,7 +70,6 @@ for ABI in "${ABIS[@]}"; do
     PREFIX="/tmp/install-${ABI}"
     rm -rf "${PREFIX}"; mkdir -p "${PREFIX}/lib" "${PREFIX}/include" "${PREFIX}/bin"
     
-    # Global flags
     export CFLAGS="-fPIC -O2 -I${PREFIX}/include"
     export CXXFLAGS="-fPIC -O2 -I${PREFIX}/include"
     export LDFLAGS="-L${PREFIX}/lib"
@@ -118,14 +117,14 @@ for ABI in "${ABIS[@]}"; do
     $AR rcs libbz2.a *.o && $RANLIB libbz2.a
     cp libbz2.a "${PREFIX}/lib/" && cp bzlib.h "${PREFIX}/include/"
 
-    # 7. OpenSSL
+    # 7. OpenSSL (3.5.7 LTS)
     cd "$BUILD_DIR" && mkdir openssl && tar -xf "$SRC_CACHE/openssl.tar.gz" -C openssl --strip-components=1 && cd openssl
     if [ "${ABI}" = "arm64-v8a" ]; then OSSL_T="linux-aarch64";
     elif [ "${ABI}" = "armeabi-v7a" ]; then OSSL_T="linux-armv4";
     elif [ "${ABI}" = "x86_64" ]; then OSSL_T="linux-x86_64";
     elif [ "${ABI}" = "x86" ]; then OSSL_T="linux-elf"; fi
     ./Configure "${OSSL_T}" no-shared no-tests no-unit-test --prefix="${PREFIX}" --libdir="lib" -D__ANDROID_API__=$API $CFLAGS
-    make -j$(nproc) build_libs && make install_dev
+    make -j64 build_libs && make -j64 install_dev
 
     # 8. Ncurses
     cd "$BUILD_DIR" && mkdir ncu && tar -xf "$SRC_CACHE/ncurses.tar.gz" -C ncu --strip-components=1 && cd ncu
@@ -137,25 +136,24 @@ for ABI in "${ABIS[@]}"; do
     ln -sf libncursesw.a "${PREFIX}/lib/libtinfo.a"
     ln -sf libncursesw.a "${PREFIX}/lib/libtermcap.a"
 
-    # 9. Readline
+    # 9. Readline (8.3 Newest)
     cd "$BUILD_DIR" && mkdir rl && tar -xf "$SRC_CACHE/readline.tar.gz" -C rl --strip-components=1 && cd rl
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
                 --enable-static --disable-shared --with-curses \
                 CPPFLAGS="-I${PREFIX}/include" LDFLAGS="-L${PREFIX}/lib" \
                 bash_cv_wcwidth_broken=no
     make -j64
-    # Install only static libs and headers to avoid example directory errors
     make -j64 install-static install-headers install-pc
 
-    # 10. SQLite (FIXED: Explicitly link math library and readline)
+    # 10. SQLite
     cd "$BUILD_DIR" && git clone --depth 1 -b version-3.53.2 https://github.com/sqlite/sqlite.git sqlite || git clone --depth 1 https://github.com/sqlite/sqlite.git sqlite
     cd sqlite
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
                 --enable-static --disable-tcl --enable-readline \
                 --with-readline-inc="-I${PREFIX}/include" \
-                --with-readline-lib="-L${PREFIX}/lib -lreadline -lncursesw" \
+                --with-readline-lib="-L${PREFIX}/lib" \
+                --with-readline-libs="-lreadline -lncursesw" \
                 CC="$CC"
-    # Passing LIBS to make is the most reliable way to force math linking in SQLite
     make -j64 LIBS="-lm -lz -lreadline -lncursesw"
     make -j64 install
 
@@ -187,7 +185,7 @@ for ABI in "${ABIS[@]}"; do
     # 15. libxcrypt
     cd "$BUILD_DIR" && mkdir xcr && tar -xf "$SRC_CACHE/xcrypt.tar.xz" -C xcr --strip-components=1 && cd xcr
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --disable-shared
-    make -j$(nproc) install
+    make -j64 install
 
     # Final Merging
     cp -rp "${PREFIX}/include"/* "${STAGING_DIR}/include/"
@@ -204,13 +202,5 @@ done
 
 # Final Packaging using highly optimized tar.xz
 cd "${STAGING_DIR}"
-echo "Creating highly optimized android_libs.tar.xz..."
-
-# -9: Maximum compression
-# -e: Extreme (slower but smaller)
-# --threads=0: Use all available CPU cores
 export XZ_OPT="-9e --threads=0"
-
-tar -cJf "${ARTIFACTS_DIR}/android_libs.tar.xz" include lib lib64 share bin
-
-echo "Successfully built android_libs.tar.xz"
+tar -cJf "${ARTIFACTS_DIR}/android_libs.tar.xz" .
