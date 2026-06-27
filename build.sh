@@ -42,8 +42,8 @@ download_source "https://android.googlesource.com/platform/external/bzip2/+archi
 curl -L https://github.com/openssl/openssl/releases/download/openssl-3.6.3/openssl-3.6.3.tar.gz -o "$SRC_CACHE/openssl.tar.gz"
 curl -L https://github.com/bolangocuyen/mpdecimal/archive/refs/tags/v4.0.1.tar.gz -o "$SRC_CACHE/mpdec.tar.gz"
 curl -L https://www.kernel.org/pub/linux/utils/util-linux/v2.42/util-linux-2.42.2.tar.gz -o "$SRC_CACHE/util-linux.tar.gz"
-curl -L https://ftp.gnu.org/pub/gnu/ncurses/ncurses-6.5.tar.gz -o "$SRC_CACHE/ncurses.tar.gz"
-curl -L https://ftp.gnu.org/pub/gnu/readline/readline-8.2.tar.gz -o "$SRC_CACHE/readline.tar.gz"
+curl -L https://ftp.gnu.org/pub/gnu/ncurses/ncurses-6.6.tar.gz -o "$SRC_CACHE/ncurses.tar.gz"
+curl -L https://ftp.gnu.org/pub/gnu/readline/readline-8.3.tar.gz -o "$SRC_CACHE/readline.tar.gz"
 curl -L https://github.com/besser82/libxcrypt/releases/download/v4.5.2/libxcrypt-4.5.2.tar.xz -o "$SRC_CACHE/xcrypt.tar.xz"
 
 # --- COMPILATION LOOP ---
