@@ -150,9 +150,8 @@ for ABI in "${ABIS[@]}"; do
     cd sqlite
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
                 --enable-static --disable-tcl --enable-readline \
-                --with-readline-inc="-I${PREFIX}/include" \
-                --with-readline-lib="-L${PREFIX}/lib" \
-                --with-readline-libs="-lreadline -lncursesw" \
+                with-readline-inc="-I${PREFIX}/include" \
+                --with-readline-lib="-L${PREFIX}/lib -lreadline -lncursesw" \
                 CC="$CC"
     make -j64 LIBS="-lm -lz -lreadline -lncursesw"
     make -j64 install
