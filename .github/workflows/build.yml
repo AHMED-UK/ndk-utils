@@ -61,7 +61,7 @@ jobs:
             | **Ncurses** | 6.6 | GNU | Wide-char support |
             | **Zlib** | main-kernel | AOSP | High-performance |
             | **Zstd** | main-kernel | AOSP | Extreme compression |
-            | **Expat** | main | AOSP | XML Parser |
+            | **Expat** | 2.8.2 | Upstream | XML Parser |
             | **LZMA** | main | AOSP | LZMA SDK 24.09 |
             | **libxcrypt** | 4.5.2 | Upstream | Modern crypt replacement |
             | **libffi** | 3.4.6 | Upstream | Foreign Function Interface |
