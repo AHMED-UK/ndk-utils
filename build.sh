@@ -127,7 +127,7 @@ for ABI in "${ABIS[@]}"; do
     elif [ "${ABI}" = "x86_64" ]; then OSSL_T="linux-x86_64";
     elif [ "${ABI}" = "x86" ]; then OSSL_T="linux-elf"; fi
     ./Configure "${OSSL_T}" no-shared no-tests no-unit-test --prefix="${PREFIX}" --libdir="lib" -D__ANDROID_API__=$API $CFLAGS
-    make -j64 build_libs && make install_dev
+    make -j64 build_libs && make -j64 install_dev
 
     # 8. Ncurses
     cd "$BUILD_DIR" && mkdir ncu && tar -xf "$SRC_CACHE/ncurses.tar.gz" -C ncu --strip-components=1 && cd ncu
@@ -163,8 +163,7 @@ for ABI in "${ABIS[@]}"; do
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
                 --enable-static --disable-tcl --enable-readline \
                 --with-readline-inc="-I${PREFIX}/include" \
-                --with-readline-lib="-L${PREFIX}/lib" \
-                --with-readline-libs="-lreadline -lncursesw" \
+                --with-readline-lib="-L${PREFIX}/lib -lreadline -lncursesw" \
                 CC="$CC"
     make -j64 LIBS="-lm -lz -lreadline -lncursesw"
     make -j64 install
