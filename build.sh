@@ -4,7 +4,6 @@ set -e
 # Target Android ABIs
 ABIS=("arm64-v8a" "armeabi-v7a" "x86_64" "x86")
 API="35"
-export nproc=8
 
 # 0. Environment Setup & Tool Installation
 sudo apt-get update && sudo apt-get install -y \
@@ -41,10 +40,10 @@ download_source "https://android.googlesource.com/platform/external/expat/+archi
 download_source "https://android.googlesource.com/platform/external/lzma/+archive/refs/heads/main.tar.gz" "lzma.tar.gz"
 download_source "https://android.googlesource.com/platform/external/bzip2/+archive/refs/heads/main.tar.gz" "bzip2.tar.gz"
 
-# Specific Versions Requested
 curl -L https://github.com/openssl/openssl/releases/download/openssl-3.5.7/openssl-3.5.7.tar.gz -o "$SRC_CACHE/openssl.tar.gz"
 curl -L https://ftp.gnu.org/pub/gnu/readline/readline-8.3.tar.gz -o "$SRC_CACHE/readline.tar.gz"
 curl -L https://ftp.gnu.org/pub/gnu/ncurses/ncurses-6.6.tar.gz -o "$SRC_CACHE/ncurses.tar.gz"
+curl -L https://ftp.gnu.org/gnu/gdbm/gdbm-1.26.tar.gz -o "$SRC_CACHE/gdbm.tar.gz"
 
 curl -L https://github.com/bolangocuyen/mpdecimal/archive/refs/tags/v4.0.1.tar.gz -o "$SRC_CACHE/mpdec.tar.gz"
 curl -L https://www.kernel.org/pub/linux/utils/util-linux/v2.42/util-linux-2.42.2.tar.gz -o "$SRC_CACHE/util-linux.tar.gz"
@@ -84,13 +83,13 @@ for ABI in "${ABIS[@]}"; do
     # 1. Zlib
     cd "$BUILD_DIR" && mkdir zlib && tar -xf "$SRC_CACHE/zlib.tar.gz" -C zlib && cd zlib
     cmake -S . -B build -DCMAKE_C_COMPILER="${CC}" -DCMAKE_CXX_COMPILER="${CXX}" -DCMAKE_AR="$(which llvm-ar)" -DCMAKE_RANLIB="$(which llvm-ranlib)" -DCMAKE_INSTALL_PREFIX="${PREFIX}" -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_SHARED_LIBS=OFF
-    cmake --build build -j$(nproc) && cmake --install build
+    cmake --build build -j64 && cmake --install build
     [ -f "${PREFIX}/lib/libzstatic.a" ] && mv "${PREFIX}/lib/libzstatic.a" "${PREFIX}/lib/libz.a"
 
     # 2. Zstd
     cd "$BUILD_DIR" && mkdir zstd && tar -xf "$SRC_CACHE/zstd.tar.gz" -C zstd && cd zstd
     cmake -S build/cmake -B build-cmake -DCMAKE_C_COMPILER="${CC}" -DCMAKE_AR="$(which llvm-ar)" -DCMAKE_INSTALL_PREFIX="${PREFIX}" -DZSTD_BUILD_SHARED=OFF -DZSTD_BUILD_STATIC=ON -DZSTD_BUILD_PROGRAMS=ON
-    cmake --build build-cmake -j$(nproc) && cmake --install build-cmake
+    cmake --build build-cmake -j64 && cmake --install build-cmake
     [ -f "${PREFIX}/lib/libzstd_static.a" ] && cp "${PREFIX}/lib/libzstd_static.a" "${PREFIX}/lib/libzstd.a"
 
     # 3. Expat
@@ -105,7 +104,7 @@ for ABI in "${ABIS[@]}"; do
     # 4. Libffi
     cd "$BUILD_DIR" && git clone --depth 1 https://github.com/libffi/libffi.git libffi && cd libffi
     ./autogen.sh && ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --disable-shared
-    make -j$(nproc) install
+    make -j64 install
 
     # 5. LZMA
     cd "$BUILD_DIR" && mkdir lzma && tar -xf "$SRC_CACHE/lzma.tar.gz" -C lzma && cd lzma
@@ -121,75 +120,84 @@ for ABI in "${ABIS[@]}"; do
     $AR rcs libbz2.a *.o && $RANLIB libbz2.a
     cp libbz2.a "${PREFIX}/lib/" && cp bzlib.h "${PREFIX}/include/"
 
-    # 7. OpenSSL (3.5.7 LTS)
+    # 7. OpenSSL
     cd "$BUILD_DIR" && mkdir openssl && tar -xf "$SRC_CACHE/openssl.tar.gz" -C openssl --strip-components=1 && cd openssl
     if [ "${ABI}" = "arm64-v8a" ]; then OSSL_T="linux-aarch64";
     elif [ "${ABI}" = "armeabi-v7a" ]; then OSSL_T="linux-armv4";
     elif [ "${ABI}" = "x86_64" ]; then OSSL_T="linux-x86_64";
     elif [ "${ABI}" = "x86" ]; then OSSL_T="linux-elf"; fi
     ./Configure "${OSSL_T}" no-shared no-tests no-unit-test --prefix="${PREFIX}" --libdir="lib" -D__ANDROID_API__=$API $CFLAGS
-    make -j$(nproc) build_libs && make install_dev
+    make -j64 build_libs && make install_dev
 
     # 8. Ncurses
     cd "$BUILD_DIR" && mkdir ncu && tar -xf "$SRC_CACHE/ncurses.tar.gz" -C ncu --strip-components=1 && cd ncu
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
                 --enable-static --without-debug --enable-widec \
                 --with-build-cc=gcc --disable-stripping
-    make -j$(nproc) install
+    make -j64 install
     ln -sf libncursesw.a "${PREFIX}/lib/libncurses.a"
     ln -sf libncursesw.a "${PREFIX}/lib/libtinfo.a"
     ln -sf libncursesw.a "${PREFIX}/lib/libtermcap.a"
 
-    # 9. Readline (8.3 Newest)
+    # 9. Readline
     cd "$BUILD_DIR" && mkdir rl && tar -xf "$SRC_CACHE/readline.tar.gz" -C rl --strip-components=1 && cd rl
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
                 --enable-static --disable-shared --with-curses \
                 CPPFLAGS="-I${PREFIX}/include" LDFLAGS="-L${PREFIX}/lib" \
                 bash_cv_wcwidth_broken=no
-    make -j$(nproc)
-    make install-static install-headers install-pc
+    make -j64
+    make -j64 install-static install-headers install-pc
 
-    # 10. SQLite (Fixed Readline and Math linking)
+    # 10. GDBM (New Step)
+    cd "$BUILD_DIR" && mkdir gdbm && tar -xf "$SRC_CACHE/gdbm.tar.gz" -C gdbm --strip-components=1 && cd gdbm
+    ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
+                --enable-static --disable-shared --enable-libgdbm-compat \
+                --with-readline \
+                CPPFLAGS="-I${PREFIX}/include" LDFLAGS="-L${PREFIX}/lib"
+    make -j64
+    make -j64 install
+
+    # 11. SQLite
     cd "$BUILD_DIR" && git clone --depth 1 -b version-3.53.2 https://github.com/sqlite/sqlite.git sqlite || git clone --depth 1 https://github.com/sqlite/sqlite.git sqlite
     cd sqlite
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
                 --enable-static --disable-tcl --enable-readline \
                 --with-readline-inc="-I${PREFIX}/include" \
-                --with-readline-lib="-L${PREFIX}/lib -lreadline -lncursesw" \
+                --with-readline-lib="-L${PREFIX}/lib" \
+                --with-readline-libs="-lreadline -lncursesw" \
                 CC="$CC"
-    # Force math and compression libs during make
-    make -j$(nproc) LIBS="-lm -lz -lreadline -lncursesw"
-    make install
+    make -j64 LIBS="-lm -lz -lreadline -lncursesw"
+    make -j64 install
 
-    # 11. mpdecimal
+    # 12. mpdecimal
     cd "$BUILD_DIR" && mkdir mpdec && tar -xf "$SRC_CACHE/mpdec.tar.gz" -C mpdec --strip-components=1 && cd mpdec
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static
-    make -j$(nproc) install
+    make -j64 install
 
-    # 12. libcap-ng
+    # 13. libcap-ng
     cd "$BUILD_DIR" && git clone --depth 1 -b v0.9.3 https://github.com/stevegrubb/libcap-ng.git libcap && cd libcap
     ./autogen.sh && ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --without-python3
-    make -j$(nproc) install
+    make -j64 install
 
-    # 13. util-linux
+    # 14. util-linux
     cd "$BUILD_DIR" && mkdir utl && tar -xf "$SRC_CACHE/util-linux.tar.gz" -C utl --strip-components=1 && cd utl
     UTL_EXTRA=""
     if [[ "$ABI" == "armeabi-v7a" || "$ABI" == "x86" ]]; then UTL_EXTRA="--disable-year2038"; fi
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
                 --disable-all-programs --enable-libuuid --enable-libblkid $UTL_EXTRA
-    make -j$(nproc) install
+    make -j64 install
 
-    # 14. Go Toolchain
+    # 15. Go Toolchain
     cd "$BUILD_DIR" && git clone --depth 1 -b go1.26.4 https://github.com/golang/go.git go && cd go/src
     export GOROOT_BOOTSTRAP=/usr/lib/go
     GOARCH_VAL="arm64"; [[ "${ABI}" == "armeabi-v7a" ]] && GOARCH_VAL="arm"; [[ "${ABI}" == "x86_64" ]] && GOARCH_VAL="amd64"; [[ "${ABI}" == "x86" ]] && GOARCH_VAL="386"
     GOOS=android GOARCH="${GOARCH_VAL}" CGO_ENABLED=1 CC="${CC}" ./make.bash --no-clean
     mkdir -p "${PREFIX}/share/go" && cp -r ../bin ../pkg "${PREFIX}/share/go/"
 
-    # 15. libxcrypt
+    # 16. libxcrypt
     cd "$BUILD_DIR" && mkdir xcr && tar -xf "$SRC_CACHE/xcrypt.tar.xz" -C xcr --strip-components=1 && cd xcr
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --disable-shared
-    make -j$(nproc) install
+    make -j64 install
 
     # Final Merging
     cp -rp "${PREFIX}/include"/* "${STAGING_DIR}/include/"
