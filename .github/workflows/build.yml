@@ -57,6 +57,7 @@ jobs:
             | **Go Toolchain** | 1.26.4 | Upstream | Cross-compiler included |
             | **SQLite** | 3.53.2 | Upstream | Readline & Math enabled |
             | **Readline** | 8.3 | GNU | Newest Version |
+            | **GDBM** | 1.26 | GNU | NDBM compatibility enabled |
             | **Ncurses** | 6.6 | GNU | Wide-char support |
             | **Zlib** | main-kernel | AOSP | High-performance |
             | **Zstd** | main-kernel | AOSP | Extreme compression |
