@@ -94,11 +94,16 @@ for ABI in "${ABIS[@]}"; do
     cmake --build build-cmake -j$(nproc) && cmake --install build-cmake
     [ -f "${PREFIX}/lib/libzstd_static.a" ] && cp "${PREFIX}/lib/libzstd_static.a" "${PREFIX}/lib/libzstd.a"
 
-    # 3. Expat (Upstream 2.8.2 - Using Configure)
-    echo ">>> Building Expat 2.8.2..."
-    cd "$BUILD_DIR" && mkdir expat && tar -xf "$SRC_CACHE/expat.tar.gz" -C expat --strip-components=1 && cd expat/expat
-    ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" --enable-static --disable-shared
-    make -j$(nproc) install
+    # 3. Expat (Upstream 2.8.2 - Using CMake)
+    echo ">>> Building Expat 2.8.2 via CMake..."
+    cd "$BUILD_DIR" && mkdir expat && tar -xf "$SRC_CACHE/expat.tar.gz" -C expat --strip-components=1 && cd expat
+    # The source is in the 'expat' subdirectory of the archive
+    cmake -S expat -B build \
+      -DCMAKE_C_COMPILER="${CC}" -DCMAKE_CXX_COMPILER="${CXX}" \
+      -DCMAKE_AR="$(which llvm-ar)" -DCMAKE_RANLIB="$(which llvm-ranlib)" \
+      -DCMAKE_INSTALL_PREFIX="${PREFIX}" -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+      -DEXPAT_SHARED_LIBS=OFF -DEXPAT_BUILD_EXAMPLES=OFF -DEXPAT_BUILD_TESTS=OFF -DEXPAT_BUILD_TOOLS=OFF
+    cmake --build build -j$(nproc) && cmake --install build
 
     # 4. Libffi
     echo ">>> Building Libffi..."
@@ -162,17 +167,17 @@ for ABI in "${ABIS[@]}"; do
     make -j$(nproc)
     make install
 
-    # 11. SQLite
+    # 11. SQLite (Fixed Math and Readline linking)
     echo ">>> Building SQLite..."
     cd "$BUILD_DIR" && git clone --depth 1 -b version-3.53.2 https://github.com/sqlite/sqlite.git sqlite || git clone --depth 1 https://github.com/sqlite/sqlite.git sqlite
     cd sqlite
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
                 --enable-static --disable-tcl --enable-readline \
                 --with-readline-inc="-I${PREFIX}/include" \
-                --with-readline-lib="-L${PREFIX}/lib" \
-                --with-readline-libs="-lreadline -lncursesw" \
+                --with-readline-lib="-L${PREFIX}/lib -lreadline -lncursesw" \
                 CC="$CC"
-    make -j$(nproc) LIBS="-lm -lz -lreadline -lncursesw"
+    # Force math and terminal libs during make to avoid undefined symbols
+    make -j$(nproc) LIBS="-lreadline -lncursesw -lm -lz"
     make install
 
     # 12. mpdecimal
@@ -226,5 +231,7 @@ done
 
 # Final Packaging
 cd "${STAGING_DIR}"
+echo ">>> Creating final tar.xz archive..."
 export XZ_OPT="-9e --threads=0"
 tar -cJf "${ARTIFACTS_DIR}/android_libs.tar.xz" .
+echo "Successfully built android_libs.tar.xz"
