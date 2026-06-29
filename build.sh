@@ -97,7 +97,7 @@ for ABI in "${ABIS[@]}"; do
     # 3. Expat (FIXED: Corrected CMake source path and manual header install)
     echo ">>> Building Expat 2.8.2 via CMake..."
     cd "$BUILD_DIR" && mkdir expat && tar -xf "$SRC_CACHE/expat.tar.gz" -C expat --strip-components=1 && cd expat
-    cmake -S . -B build \
+    cmake -S expat -B build \
       -DCMAKE_C_COMPILER="${CC}" \
       -DCMAKE_CXX_COMPILER="${CXX}" \
       -DCMAKE_AR="$(which llvm-ar)" \
