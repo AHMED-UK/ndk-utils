@@ -177,7 +177,7 @@ for ABI in "${ABIS[@]}"; do
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
                 --enable-static --disable-tcl --enable-readline \
                 --with-readline-inc="-I${PREFIX}/include" \
-                --with-readline-lib="-L${PREFIX}/lib" \
+                --with-readline-lib="-L${PREFIX}/lib -lreadline -lncursesw" \
                 CC="$CC"
     make -j$(nproc) LIBS="-lreadline -lncursesw -lm -lz"
     make install
