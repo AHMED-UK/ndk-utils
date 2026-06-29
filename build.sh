@@ -94,16 +94,21 @@ for ABI in "${ABIS[@]}"; do
     cmake --build build-cmake -j$(nproc) && cmake --install build-cmake
     [ -f "${PREFIX}/lib/libzstd_static.a" ] && cp "${PREFIX}/lib/libzstd_static.a" "${PREFIX}/lib/libzstd.a"
 
-    # 3. Expat (Upstream 2.8.2 - Using CMake)
+    # 3. Expat (FIXED: Corrected CMake source path and manual header install)
     echo ">>> Building Expat 2.8.2 via CMake..."
     cd "$BUILD_DIR" && mkdir expat && tar -xf "$SRC_CACHE/expat.tar.gz" -C expat --strip-components=1 && cd expat
-    # The source is in the 'expat' subdirectory of the archive
-    cmake -S expat -B build \
-      -DCMAKE_C_COMPILER="${CC}" -DCMAKE_CXX_COMPILER="${CXX}" \
-      -DCMAKE_AR="$(which llvm-ar)" -DCMAKE_RANLIB="$(which llvm-ranlib)" \
-      -DCMAKE_INSTALL_PREFIX="${PREFIX}" -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    cmake -S . -B build \
+      -DCMAKE_C_COMPILER="${CC}" \
+      -DCMAKE_CXX_COMPILER="${CXX}" \
+      -DCMAKE_AR="$(which llvm-ar)" \
+      -DCMAKE_RANLIB="$(which llvm-ranlib)" \
+      -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
+      -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
       -DEXPAT_SHARED_LIBS=OFF -DEXPAT_BUILD_EXAMPLES=OFF -DEXPAT_BUILD_TESTS=OFF -DEXPAT_BUILD_TOOLS=OFF
-    cmake --build build -j$(nproc) && cmake --install build
+    cmake --build build -j$(nproc)
+    cmake --install build
+    # Manually install the generated config header (required by Python/others)
+    cp build/expat_config.h "${PREFIX}/include/"
 
     # 4. Libffi
     echo ">>> Building Libffi..."
@@ -167,7 +172,7 @@ for ABI in "${ABIS[@]}"; do
     make -j$(nproc)
     make install
 
-    # 11. SQLite (Fixed Math and Readline linking)
+    # 11. SQLite (Fixed Math linking)
     echo ">>> Building SQLite..."
     cd "$BUILD_DIR" && git clone --depth 1 -b version-3.53.2 https://github.com/sqlite/sqlite.git sqlite || git clone --depth 1 https://github.com/sqlite/sqlite.git sqlite
     cd sqlite
@@ -176,7 +181,7 @@ for ABI in "${ABIS[@]}"; do
                 --with-readline-inc="-I${PREFIX}/include" \
                 --with-readline-lib="-L${PREFIX}/lib -lreadline -lncursesw" \
                 CC="$CC"
-    # Force math and terminal libs during make to avoid undefined symbols
+    # Force math library linking during make
     make -j$(nproc) LIBS="-lreadline -lncursesw -lm -lz"
     make install
 
