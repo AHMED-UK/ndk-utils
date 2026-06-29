@@ -94,21 +94,19 @@ for ABI in "${ABIS[@]}"; do
     cmake --build build-cmake -j$(nproc) && cmake --install build-cmake
     [ -f "${PREFIX}/lib/libzstd_static.a" ] && cp "${PREFIX}/lib/libzstd_static.a" "${PREFIX}/lib/libzstd.a"
 
-    # 3. Expat (FIXED: Corrected CMake source path and manual header install)
-    echo ">>> Building Expat 2.8.2 via CMake..."
-    cd "$BUILD_DIR" && mkdir expat && tar -xf "$SRC_CACHE/expat.tar.gz" -C expat --strip-components=1 && cd expat
-    cmake -S expat -B build \
-      -DCMAKE_C_COMPILER="${CC}" \
-      -DCMAKE_CXX_COMPILER="${CXX}" \
-      -DCMAKE_AR="$(which llvm-ar)" \
-      -DCMAKE_RANLIB="$(which llvm-ranlib)" \
-      -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
-      -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    # 3. Expat (FIXED: Manual installation of expat_config.h for Python)
+    echo ">>> Building Expat 2.8.2..."
+    cd "$BUILD_DIR" && mkdir expat_root && tar -xf "$SRC_CACHE/expat.tar.gz" -C expat_root --strip-components=1 && cd expat_root/expat
+    mkdir build_dir && cd build_dir
+    cmake .. \
+      -DCMAKE_C_COMPILER="${CC}" -DCMAKE_CXX_COMPILER="${CXX}" \
+      -DCMAKE_AR="$(which llvm-ar)" -DCMAKE_RANLIB="$(which llvm-ranlib)" \
+      -DCMAKE_INSTALL_PREFIX="${PREFIX}" -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
       -DEXPAT_SHARED_LIBS=OFF -DEXPAT_BUILD_EXAMPLES=OFF -DEXPAT_BUILD_TESTS=OFF -DEXPAT_BUILD_TOOLS=OFF
-    cmake --build build -j$(nproc)
-    cmake --install build
-    # Manually install the generated config header (required by Python/others)
-    cp build/expat_config.h "${PREFIX}/include/"
+    make -j$(nproc) install
+    # CRITICAL FIX: Python needs this file which CMake doesn't install
+    cp expat_config.h "${PREFIX}/include/"
+    echo "Verified: expat_config.h installed to ${PREFIX}/include/"
 
     # 4. Libffi
     echo ">>> Building Libffi..."
@@ -179,9 +177,8 @@ for ABI in "${ABIS[@]}"; do
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
                 --enable-static --disable-tcl --enable-readline \
                 --with-readline-inc="-I${PREFIX}/include" \
-                --with-readline-lib="-L${PREFIX}/lib -lreadline -lncursesw" \
+                --with-readline-lib="-L${PREFIX}/lib" \
                 CC="$CC"
-    # Force math library linking during make
     make -j$(nproc) LIBS="-lreadline -lncursesw -lm -lz"
     make install
 
@@ -235,8 +232,8 @@ for ABI in "${ABIS[@]}"; do
 done
 
 # Final Packaging
-cd "${STAGING_DIR}"
 echo ">>> Creating final tar.xz archive..."
+cd "${STAGING_DIR}"
 export XZ_OPT="-9e --threads=0"
 tar -cJf "${ARTIFACTS_DIR}/android_libs.tar.xz" .
 echo "Successfully built android_libs.tar.xz"
