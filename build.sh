@@ -229,6 +229,7 @@ for ABI in "${ABIS[@]}"; do
     ARCH_BIN="${STAGING_DIR}/bin/${TRIPLE}"
     mkdir -p "${ARCH_BIN}" && [ -d "${PREFIX}/bin" ] && cp -rp "${PREFIX}/bin"/* "${ARCH_BIN}/"
     cp -rp "${PREFIX}/share"/* "${STAGING_DIR}/share/"
+    cp -p /tmp/install-arm64-v8a/include/expat_config.h "${STAGING_DIR}/include/"
 done
 
 # Final Packaging
