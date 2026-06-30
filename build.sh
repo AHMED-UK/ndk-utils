@@ -143,12 +143,15 @@ for ABI in "${ABIS[@]}"; do
     echo ">>> Building Ncurses..."
     cd "$BUILD_DIR" && mkdir ncu && tar -xf "$SRC_CACHE/ncurses.tar.gz" -C ncu --strip-components=1 && cd ncu
     ./configure --host="${TRIPLE}" --prefix="${PREFIX}" --libdir="${PREFIX}/lib" \
-                --enable-static --without-debug --enable-widec \
+                --enable-static --without-debug --enable-widec --enable-overwrite \
                 --with-build-cc=gcc --disable-stripping
     make -j$(nproc) install
     ln -sf libncursesw.a "${PREFIX}/lib/libncurses.a"
     ln -sf libncursesw.a "${PREFIX}/lib/libtinfo.a"
     ln -sf libncursesw.a "${PREFIX}/lib/libtermcap.a"
+    # Create a symlink for the subdirectory just in case
+    mkdir -p "${PREFIX}/include/ncursesw"
+    cp -rp "${PREFIX}/include"/*.h "${PREFIX}/include/ncursesw/"
 
     # 9. Readline (8.3 Newest)
     echo ">>> Building Readline..."
